@@ -258,6 +258,26 @@ Any SMTP provider works the same way (Outlook, SendGrid/Mailgun SMTP relay, etc.
   case you want to use it during its 60-day trial window, but it's no
   longer the default recommendation.
 
+**Stage 7.4 — Fixed the Version Badge (Real Routing Bug) + Brevo Activation**
+- **Real bug found and fixed**: `/api/health` and `/api/version` were
+  defined *after* `app.mount("/", StaticFiles(...))` in `main.py`. Since
+  a `Mount("/")` matches every path as a catch-all, and Starlette
+  matches routes in registration order, both endpoints were silently
+  unreachable (404) despite showing up in `app.routes` - which is why
+  earlier testing (checking route registration only) didn't catch it.
+  Confirmed via `TestClient` making an actual request before and after
+  the fix. **Any future ad-hoc `@app.get()` routes must be defined
+  before the StaticFiles mount, not after** - routers added via
+  `include_router()` are unaffected since those are already registered
+  earlier in the file.
+- **Brevo requires manual account activation** for transactional email
+  sending on every new account - separate from having a valid API key.
+  If you see `"Your SMTP account is not yet activated"`: Brevo -> help
+  icon (top right) -> Support and Tickets -> describe your use case
+  (personal job-application tool, low volume, transactional) -> usually
+  approved within 1-2 business days. Not fixable from the app side;
+  it's Brevo's anti-abuse review process for every new account.
+
 ## Not yet built (next stages)
 
 Job scrapers requiring browser automation (LinkedIn/Naukri/etc. via

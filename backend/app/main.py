@@ -52,13 +52,6 @@ app.include_router(job_router.router)
 app.include_router(jobsearch_router.router)
 app.include_router(notifications_router.router)
 
-# Serve the plain HTML/Bootstrap/JS frontend at /
-# Resolved absolutely (not "../frontend") so this works no matter what the
-# process's working directory is - important on Render, where the start
-# command may run from the repo root rather than backend/.
-FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
-
 
 @app.get("/api/health")
 async def health():
@@ -66,12 +59,28 @@ async def health():
 
 
 # Bump this string every time you ship a change. Check it after a deploy
-# (GET /api/version, or the small badge in the UI footer) to confirm
-# Render is actually running the code you think it is - saves a lot of
-# guessing when something "doesn't seem to have the fix."
-APP_VERSION = "stage7.3-brevo-permanent-free-email"
+# (GET /api/version, or the small badge in the navbar) to confirm Render
+# is actually running the code you think it is - saves a lot of guessing
+# when something "doesn't seem to have the fix."
+#
+# IMPORTANT: this route (and /api/health) must be defined BEFORE the
+# StaticFiles mount below. A Mount("/") matches every path as a catch-all,
+# so any @app.get() defined AFTER it is silently unreachable - that was a
+# real bug here (confirmed via TestClient: /api/version returned 404
+# instead of the version, which is exactly why the navbar badge showed
+# "unknown" even on a fully up-to-date deploy).
+APP_VERSION = "stage7.4-fix-version-endpoint-shadowed-by-static-mount"
 
 
 @app.get("/api/version")
 async def version():
     return {"version": APP_VERSION}
+
+
+# Serve the plain HTML/Bootstrap/JS frontend at /
+# Resolved absolutely (not "../frontend") so this works no matter what the
+# process's working directory is - important on Render, where the start
+# command may run from the repo root rather than backend/.
+# MUST be the LAST route registered - see note above.
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
