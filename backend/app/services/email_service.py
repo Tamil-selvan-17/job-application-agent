@@ -48,6 +48,8 @@ def _force_ipv4_dns():
 
 
 def is_configured() -> bool:
+    if env_settings.email_provider == "mailjet":
+        return bool(env_settings.mailjet_api_key and env_settings.mailjet_api_secret and env_settings.mailjet_from_email)
     if env_settings.email_provider == "brevo":
         return bool(env_settings.brevo_api_key and env_settings.brevo_from_email)
     if env_settings.email_provider == "sendgrid":
@@ -91,6 +93,7 @@ async def send_email(
     """
     if not is_configured():
         reasons = {
+            "mailjet": "Mailjet not configured (set MAILJET_API_KEY/MAILJET_API_SECRET/MAILJET_FROM_EMAIL in .env)",
             "brevo": "Brevo not configured (set BREVO_API_KEY/BREVO_FROM_EMAIL in .env)",
             "sendgrid": "SendGrid not configured (set SENDGRID_API_KEY/SENDGRID_FROM_EMAIL in .env)",
         }
@@ -101,11 +104,70 @@ async def send_email(
     if not recipient:
         return {"sent": False, "reason": "No recipient email available (set NOTIFY_EMAIL_TO or your email in Job Search Config)"}
 
+    if env_settings.email_provider == "mailjet":
+        return await _send_via_mailjet(subject, html_body, recipient, attachments or [])
     if env_settings.email_provider == "brevo":
         return await _send_via_brevo(subject, html_body, recipient, attachments or [])
     if env_settings.email_provider == "sendgrid":
         return await _send_via_sendgrid(subject, html_body, recipient, attachments or [])
     return await _send_via_smtp(subject, html_body, recipient, attachments or [])
+
+
+async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+    """
+    Sends over HTTPS via Mailjet's Send API v3.1 - bypasses Render's
+    free-tier SMTP port block same as Brevo/SendGrid. Unlike Brevo,
+    Mailjet's free plan doesn't gate transactional sending behind a
+    manual support-ticket review - it works right after the normal
+    sender-email confirmation click.
+    """
+    import base64
+    import httpx
+
+    mj_attachments = []
+    for path, filename in attachments:
+        p = Path(path)
+        if not path or not p.exists():
+            continue
+        ctype, _ = mimetypes.guess_type(filename)
+        mj_attachments.append(
+            {
+                "ContentType": ctype or "application/octet-stream",
+                "Filename": filename,
+                "Base64Content": base64.b64encode(p.read_bytes()).decode("ascii"),
+            }
+        )
+
+    from_block = {"Email": env_settings.mailjet_from_email}
+    if env_settings.mailjet_from_name:
+        from_block["Name"] = env_settings.mailjet_from_name
+
+    message = {
+        "From": from_block,
+        "To": [{"Email": recipient}],
+        "Subject": subject,
+        "HTMLPart": html_body,
+    }
+    if mj_attachments:
+        message["Attachments"] = mj_attachments
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                "https://api.mailjet.com/v3.1/send",
+                auth=(env_settings.mailjet_api_key, env_settings.mailjet_api_secret),
+                json={"Messages": [message]},
+            )
+            if resp.status_code >= 400:
+                return {"sent": False, "reason": f"Mailjet {resp.status_code}: {resp.text[:300]}"}
+            data = resp.json()
+            status = data.get("Messages", [{}])[0].get("Status", "")
+            if status != "success":
+                return {"sent": False, "reason": f"Mailjet reported status: {status} - {resp.text[:300]}"}
+    except Exception as e:
+        return {"sent": False, "reason": str(e)}
+
+    return {"sent": True, "recipient": recipient}
 
 
 async def _send_via_brevo(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:

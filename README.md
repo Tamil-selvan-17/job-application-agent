@@ -278,6 +278,26 @@ Any SMTP provider works the same way (Outlook, SendGrid/Mailgun SMTP relay, etc.
   approved within 1-2 business days. Not fixable from the app side;
   it's Brevo's anti-abuse review process for every new account.
 
+**Stage 7.5 — Mailjet: Free Email With No Approval Wait**
+- Added **Mailjet** (`EMAIL_PROVIDER=mailjet`) as the new recommended
+  provider - permanent free plan (200/day, 6000/month, no credit card,
+  confirmed across multiple current sources), and unlike Brevo, it does
+  **not** gate transactional sending behind a manual support-ticket
+  review - it works right after the normal sender-email confirmation
+  click.
+- Setup:
+  1. Sign up free at mailjet.com
+  2. Account Settings -> Sender addresses & domains -> Add a sender
+     address -> enter your Gmail -> click the confirmation link they email
+  3. Account Settings -> REST API -> API Key Management -> copy both the
+     **API Key** and **Secret Key** (Mailjet uses a key+secret pair, not
+     a single bearer token like Brevo/SendGrid)
+  4. Set in `.env`: `MAILJET_API_KEY`, `MAILJET_API_SECRET`,
+     `MAILJET_FROM_EMAIL` (must match the validated sender),
+     `MAILJET_FROM_NAME`
+- Brevo and SendGrid support remain in the code as alternatives if
+  preferred - just change `EMAIL_PROVIDER`.
+
 ## Not yet built (next stages)
 
 Job scrapers requiring browser automation (LinkedIn/Naukri/etc. via

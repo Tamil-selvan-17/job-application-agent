@@ -36,13 +36,15 @@ class EnvSettings(BaseSettings):
     adzuna_app_key: str = ""
     adzuna_country: str = "in"  # ISO country code Adzuna searches, e.g. "in", "gb", "us"
 
-    # Email notifications. EMAIL_PROVIDER options: "brevo" (recommended -
-    # genuinely permanent free plan, no domain needed), "sendgrid" (now a
-    # 60-day trial only, not permanent), or "smtp" (local dev / paid
-    # Render plans - Render's free tier blocks outbound SMTP ports
-    # entirely). Leave the matching *_api_key/smtp_host empty to disable
-    # emails - notification calls just no-op with a clear message.
-    email_provider: str = "brevo"
+    # Email notifications. EMAIL_PROVIDER options: "mailjet" (recommended
+    # - permanent free plan, works immediately, no approval wait),
+    # "brevo" (permanent free plan but requires a 1-2 day manual approval
+    # ticket first), "sendgrid" (now a 60-day trial only, not permanent),
+    # or "smtp" (local dev / paid Render plans - Render's free tier
+    # blocks outbound SMTP ports entirely). Leave the matching
+    # *_api_key/smtp_host empty to disable emails - notification calls
+    # just no-op with a clear message.
+    email_provider: str = "mailjet"
 
     smtp_host: str = ""
     smtp_port: int = 587
@@ -55,14 +57,22 @@ class EnvSettings(BaseSettings):
     sendgrid_from_email: str = ""  # must match your Single Sender Verified address
     sendgrid_from_name: str = ""
 
-    # Brevo (https://www.brevo.com) - genuinely permanent free plan (300
-    # emails/day, no trial expiry, unlike SendGrid which now expires
-    # after 60 days). Sender verification is just a 6-digit code emailed
-    # to you - no custom domain/DNS required. Recommended default for
-    # Render's free tier.
+    # Brevo (https://www.brevo.com) - permanent free plan (300/day), but
+    # gates transactional sending behind a manual support-ticket approval
+    # for every new account (1-2 business day wait) - see README.
     brevo_api_key: str = ""
     brevo_from_email: str = ""  # must match your verified sender
     brevo_from_name: str = ""
+
+    # Mailjet (https://www.mailjet.com) - permanent free plan (200/day,
+    # 6000/month), no credit card. Unlike Brevo, transactional sending
+    # works immediately after a normal sender-email confirmation click -
+    # no manual review/support-ticket wait. Recommended if you don't
+    # want to wait on Brevo's approval.
+    mailjet_api_key: str = ""
+    mailjet_api_secret: str = ""
+    mailjet_from_email: str = ""  # must match your validated sender
+    mailjet_from_name: str = ""
 
     # Scheduler
     enable_scheduler: bool = True
