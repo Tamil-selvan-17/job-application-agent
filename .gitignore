@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+venv/
+.venv/
+*.egg-info/
+
+# Env / secrets
+.env
+*.env.local
+
+# Uploaded files (user data, don't commit)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Logs
+backend/logs/*
+!backend/logs/.gitkeep
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Docker
+docker/*.log

@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: job_agent_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: job_agent_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: job_agent_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: job_agent_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: job_agent_backend
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - mongodb
+      - redis
+      - qdrant
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  qdrant_data:
+  ollama_data:

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Job Application Agent</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css?v=10">
+</head>
+<body>
+<nav class="navbar navbar-dark bg-dark">
+  <div class="container">
+    <span class="navbar-brand mb-0 h1">🤖 AI Job Application Agent</span>
+    <span id="version-badge" class="badge bg-dark border me-2" title="Confirms which build is actually deployed"></span>
+    <span id="ai-status-badge" class="badge bg-secondary">checking AI...</span>
+  </div>
+</nav>
+
+<div class="container py-4">
+
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><button class="nav-link active" data-tab="settings">Settings</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="config">Job Search Config</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="resumes">Resumes</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="jobs">Jobs</button></li>
+  </ul>
+
+  <!-- SETTINGS TAB -->
+  <div id="tab-settings" class="tab-pane">
+    <div class="card mb-4">
+      <div class="card-header">AI Provider <span class="badge bg-info text-dark">configured via .env</span></div>
+      <div class="card-body">
+        <p class="text-muted small">
+          The AI provider is set in <code>backend/.env</code> (<code>AI_PROVIDER=ollama</code> or
+          <code>AI_PROVIDER=gemini</code>), not from this UI. Edit <code>.env</code> and restart the
+          server to switch. This panel just shows what's currently active.
+        </p>
+        <table class="table table-sm w-auto">
+          <tbody>
+            <tr><th>Active Provider</th><td id="disp_ai_provider">-</td></tr>
+            <tr><th>Ollama Base URL</th><td id="disp_ollama_base_url">-</td></tr>
+            <tr><th>Ollama Model</th><td id="disp_ollama_model">-</td></tr>
+            <tr><th>Gemini Model</th><td id="disp_gemini_model">-</td></tr>
+            <tr><th>Gemini API Key</th><td id="disp_gemini_key">-</td></tr>
+          </tbody>
+        </table>
+        <button class="btn btn-outline-secondary" id="test-ai-btn">Test Connection</button>
+        <span id="settings-msg" class="ms-2"></span>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header">Email Notifications <span class="badge bg-info text-dark">configured via .env</span></div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Set via <code>EMAIL_PROVIDER</code> in <code>backend/.env</code>: <code>brevo</code> (recommended - genuinely
+          free forever, no domain needed), <code>sendgrid</code> (now a 60-day trial only), or <code>smtp</code>
+          (local dev / paid Render plans - Render's free tier blocks outbound SMTP entirely). Notifications are sent for:
+          new matching jobs found by the daily search, and applications due for a follow-up.
+        </p>
+        <p><strong>Status:</strong> <span id="email-status-text">checking...</span></p>
+        <button class="btn btn-outline-secondary" id="send-test-email-btn">Send Test Email</button>
+        <span id="email-test-msg" class="ms-2"></span>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header">Job Search Preferences</div>
+      <div class="card-body">
+        <label class="form-label">Job Description Language</label>
+        <select id="pref-language" class="form-select w-auto d-inline-block">
+          <option value="English">English (default)</option>
+          <option value="Any">Any language</option>
+          <option value="German">German</option>
+          <option value="French">French</option>
+          <option value="Spanish">Spanish</option>
+          <option value="Portuguese">Portuguese</option>
+          <option value="Hindi">Hindi</option>
+          <option value="Tamil">Tamil</option>
+        </select>
+        <div class="form-text">
+          Jobs whose description isn't detected as this language are skipped during search.
+          This is the same "language" field in your Job Search Config JSON.
+        </div>
+        <span id="pref-language-msg" class="ms-2"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIG TAB -->
+  <div id="tab-config" class="tab-pane d-none">
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Job Search Config (JSON)</span>
+        <div>
+          <label class="btn btn-sm btn-outline-secondary mb-0">
+            Upload JSON
+            <input type="file" id="config-file-input" accept=".json" hidden>
+          </label>
+          <button class="btn btn-sm btn-outline-secondary" id="reload-config-btn">Reload</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Edit the JSON below directly, or upload a .json file - either way you can update this
+          at any time and it takes effect immediately, no restart needed.
+        </p>
+        <textarea id="config-json" class="form-control font-monospace" rows="22" spellcheck="false"></textarea>
+        <div class="mt-3">
+          <button class="btn btn-success" id="save-config-btn">Save Config</button>
+          <span id="config-msg" class="ms-2"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESUMES TAB -->
+  <div id="tab-resumes" class="tab-pane d-none">
+    <div class="card mb-3">
+      <div class="card-header">Upload Resume</div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-auto">
+            <label class="form-label mb-1">File (.pdf or .docx)</label>
+            <input type="file" id="resume-file-input" class="form-control" accept=".pdf,.docx">
+          </div>
+          <div class="col-auto form-check ms-2 mb-2">
+            <input class="form-check-input" type="checkbox" id="resume-set-default">
+            <label class="form-check-label" for="resume-set-default">Set as default</label>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-primary mb-2" id="resume-upload-btn">Upload</button>
+          </div>
+        </div>
+        <span id="resume-upload-msg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex justify-content-between">
+        <span>Your Resumes</span>
+        <button class="btn btn-sm btn-outline-secondary" id="reload-resumes-btn">Reload</button>
+      </div>
+      <div class="card-body">
+        <div id="resumes-list" class="list-group"></div>
+      </div>
+    </div>
+
+    <!-- Resume detail modal-ish panel -->
+    <div class="card mt-3 d-none" id="resume-detail-card">
+      <div class="card-header d-flex justify-content-between">
+        <span id="resume-detail-title">Resume</span>
+        <button class="btn btn-sm btn-outline-secondary" id="resume-detail-close">Close</button>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <button class="btn btn-sm btn-outline-primary" id="resume-set-default-btn">Set as Default</button>
+          <button class="btn btn-sm btn-outline-danger" id="resume-delete-btn">Delete</button>
+          <label class="btn btn-sm btn-outline-secondary mb-0">
+            Upload New Version
+            <input type="file" id="resume-version-input" accept=".pdf,.docx" hidden>
+          </label>
+          <button class="btn btn-sm btn-outline-success" id="resume-analyze-btn">Analyze with AI</button>
+        </div>
+        <h6>Extracted Text</h6>
+        <pre id="resume-detail-text" class="border rounded p-2 bg-white" style="max-height:250px; overflow:auto; white-space:pre-wrap;"></pre>
+
+        <h6 class="mt-3">Version History</h6>
+        <ul id="resume-versions-list" class="list-group mb-3"></ul>
+
+        <div id="resume-analysis-block" class="d-none">
+          <h6>AI Analysis</h6>
+          <pre id="resume-analysis-text" class="border rounded p-2 bg-light" style="white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- COVER LETTERS -->
+    <div class="card mt-4">
+      <div class="card-header">Cover Letters</div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-auto">
+            <label class="form-label mb-1">File (.pdf or .docx)</label>
+            <input type="file" id="cl-file-input" class="form-control" accept=".pdf,.docx">
+          </div>
+          <div class="col-auto form-check ms-2 mb-2">
+            <input class="form-check-input" type="checkbox" id="cl-set-default">
+            <label class="form-check-label" for="cl-set-default">Set as default</label>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-primary mb-2" id="cl-upload-btn">Upload</button>
+          </div>
+          <div class="col-12"><span id="cl-upload-msg"></span></div>
+        </div>
+        <div id="cl-list" class="list-group"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- JOBS TAB -->
+  <div id="tab-jobs" class="tab-pane d-none">
+    <div class="card mb-3">
+      <div class="card-header">Automated Job Search</div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Pulls from the sources listed in your Job Search Config (currently: Remotive and Arbeitnow are
+          live free job-board APIs; LinkedIn/Indeed/Naukri/etc. need browser automation and aren't wired up
+          yet). Also runs automatically once a day if the server stays awake.
+        </p>
+        <button class="btn btn-primary" id="run-search-btn">Search Jobs Now</button>
+        <button class="btn btn-outline-danger" id="clear-jobs-btn">Clear "New" Jobs</button>
+        <span id="search-msg" class="ms-2"></span>
+      </div>
+    </div>
+
+    <div class="card mb-3 d-none" id="followups-card">
+      <div class="card-header">Follow-ups Due</div>
+      <div class="card-body">
+        <div id="followups-list"></div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">Add Job (manual entry - scrapers plug in here later)</div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-4"><input class="form-control" id="job-title" placeholder="Job Title"></div>
+          <div class="col-md-4"><input class="form-control" id="job-company" placeholder="Company"></div>
+          <div class="col-md-4"><input class="form-control" id="job-location" placeholder="Location"></div>
+          <div class="col-md-4"><input class="form-control" id="job-url" placeholder="Job URL (optional)"></div>
+          <div class="col-md-4"><input class="form-control" id="job-salary" placeholder="Salary (optional)"></div>
+          <div class="col-12">
+            <textarea class="form-control" id="job-description" rows="5" placeholder="Paste full job description here..."></textarea>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" id="job-add-btn">Add Job</button>
+            <span id="job-add-msg" class="ms-2"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>Jobs</span>
+        <div class="d-flex align-items-center gap-2">
+          <label class="mb-0 small">Min match %:</label>
+          <input type="number" id="min-match-filter" class="form-control form-control-sm" style="width:70px" min="0" max="100" placeholder="any">
+          <button class="btn btn-sm btn-outline-primary" id="analyze-unanalyzed-btn">Analyze All Unanalyzed (AI)</button>
+          <button class="btn btn-sm btn-outline-secondary" id="reload-jobs-btn">Reload</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <span id="analyze-unanalyzed-msg" class="d-block mb-2"></span>
+        <div id="jobs-list" class="list-group"></div>
+      </div>
+    </div>
+
+    <div class="card mt-3 d-none" id="job-detail-card">
+      <div class="card-header d-flex justify-content-between">
+        <span id="job-detail-title">Job</span>
+        <button class="btn btn-sm btn-outline-secondary" id="job-detail-close">Close</button>
+      </div>
+      <div class="card-body">
+        <div class="mb-2">
+          <select class="form-select form-select-sm d-inline-block w-auto" id="job-status-select">
+            <option value="new">New</option>
+            <option value="saved">Saved</option>
+            <option value="applied">Applied</option>
+            <option value="rejected">Rejected</option>
+            <option value="interview">Interview</option>
+            <option value="offer">Offer</option>
+          </select>
+          <button class="btn btn-sm btn-outline-danger" id="job-delete-btn">Delete</button>
+          <button class="btn btn-sm btn-outline-success" id="job-analyze-btn">Analyze / ATS Match</button>
+          <button class="btn btn-sm btn-primary" id="job-apply-btn">Apply Now (Website)</button>
+          <div class="form-text">Opens the employer's actual page in a new tab (resolves past aggregator redirect links like Adzuna's) and marks it as "Applied" - it does not auto-fill or auto-submit any form on the company's site.</div>
+        </div>
+
+        <div class="border rounded p-2 mb-3 bg-white">
+          <strong>Email HR / Recruiter Instead</strong>
+          <div class="form-text mb-1">
+            Preview, edit if needed, then send a professional application email with your default resume
+            (and cover letter, if set) attached. Nothing sends until you confirm.
+          </div>
+          <div class="row g-2 align-items-center mb-2">
+            <div class="col-auto" style="min-width:280px">
+              <input type="email" id="job-hr-email" class="form-control form-control-sm" placeholder="hr@company.com">
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-outline-primary" id="job-email-preview-btn">Preview Email</button>
+            </div>
+          </div>
+          <div id="job-email-preview-block" class="d-none">
+            <label class="form-label small mb-0">Subject</label>
+            <input type="text" id="job-email-subject" class="form-control form-control-sm mb-2">
+            <label class="form-label small mb-0">Body (HTML - edit freely)</label>
+            <textarea id="job-email-body" class="form-control form-control-sm mb-2" rows="10"></textarea>
+            <button class="btn btn-sm btn-success" id="job-email-confirm-send-btn">Confirm & Send</button>
+            <button class="btn btn-sm btn-outline-secondary" id="job-email-cancel-btn">Cancel</button>
+          </div>
+          <span id="job-email-apply-msg" class="ms-2"></span>
+        </div>
+        <div id="job-application-status" class="small text-muted mb-3"></div>
+
+        <h6>Description</h6>
+        <pre id="job-detail-desc" class="border rounded p-2 bg-white" style="max-height:200px; overflow:auto; white-space:pre-wrap;"></pre>
+
+        <div id="job-analysis-block" class="d-none">
+          <h6 class="mt-3">AI Analysis / ATS Match</h6>
+          <div class="mb-2">
+            <span class="badge bg-primary fs-6" id="job-match-badge">0%</span>
+            <span id="job-match-reason" class="ms-2"></span>
+          </div>
+          <div class="row">
+            <div class="col-md-6">
+              <strong>Extracted Skills</strong>
+              <ul id="job-skills-list" class="small"></ul>
+              <strong>Missing Skills</strong>
+              <ul id="job-missing-skills-list" class="small text-danger"></ul>
+            </div>
+            <div class="col-md-6">
+              <strong>Learning Suggestions</strong>
+              <ul id="job-learning-list" class="small"></ul>
+              <p class="small"><strong>Experience Required:</strong> <span id="job-experience"></span></p>
+              <p class="small"><strong>Interview Difficulty:</strong> <span id="job-difficulty"></span></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="js/app.js?v=10"></script>
+</body>
+</html>

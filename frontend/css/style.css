@@ -1,0 +1,4 @@
+body { background: #f6f7f9; }
+.tab-pane { min-height: 60vh; }
+#config-json { font-size: 0.85rem; }
+.nav-link { cursor: pointer; }

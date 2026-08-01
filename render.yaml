@@ -1,0 +1,63 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Deploy: push this repo to GitHub, then in Render dashboard choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this
+# file automatically.
+#
+# IMPORTANT: Render does not host MongoDB. Use a free MongoDB Atlas
+# cluster (https://www.mongodb.com/cloud/atlas/register) and set
+# MONGO_URI below (in the Render dashboard, not in git) to its
+# connection string.
+#
+# Ollama (local AI) won't be reachable from Render unless you expose an
+# Ollama server on a public URL yourself. For a cloud deployment, set
+# AI_PROVIDER=gemini and provide GEMINI_API_KEY.
+
+services:
+  - type: web
+    name: job-agent-backend
+    env: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGO_URI
+        sync: false          # set manually in Render dashboard (Atlas connection string)
+      - key: MONGO_DB_NAME
+        value: job_agent
+      - key: AI_PROVIDER
+        value: gemini        # ollama is not reachable from Render unless self-hosted publicly
+      - key: GEMINI_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: GEMINI_MODEL
+        value: gemini-1.5-flash
+      - key: OLLAMA_BASE_URL
+        value: http://localhost:11434
+      - key: OLLAMA_MODEL
+        value: llama3.1
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      - key: APP_ENV
+        value: production
+      - key: UPLOAD_DIR
+        value: uploads
+      - key: SMTP_HOST
+        sync: false          # optional - leave unset in Render to disable email notifications
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: NOTIFY_EMAIL_TO
+        sync: false
+      - key: ENABLE_SCHEDULER
+        value: "true"
+      - key: DAILY_SEARCH_HOUR_UTC
+        value: "3"
+      - key: DAILY_REMINDER_HOUR_UTC
+        value: "4"
