@@ -406,3 +406,49 @@ Go to the **Job Search Config** tab — edit the JSON directly and click
 **Save Config**, or use **Upload JSON** to replace it with a file. This
 can be done at any time; it takes effect immediately for the next job
 search run (once the job-search engine is built in a later stage).
+
+## Stage 8 — Self-Hosted Email Relay
+
+After hitting account-level friction with three consecutive third-party
+ESPs (SendGrid's trial expired, Brevo needed manual approval, Mailjet
+auto-blocked the new account - a real pattern, not bad luck: brand-new
+accounts immediately sending via API is a common spam signature every
+ESP watches for), added `EMAIL_PROVIDER=custom` - calls your own
+self-hosted send-email API (a C#/.NET endpoint) instead of any
+third-party ESP. Same underlying pattern as Mailjet/Brevo (HTTP API in
+front of SMTP sending, so Render's SMTP port block never applies), but
+you control it entirely - no ESP account review of any kind. Reuses the
+existing `SMTP_*` env vars for the Gmail credentials sent to the relay.
+
+## Stage 8.1 — Fixed Silent Attachment Failures
+
+**Real bug found**: resumes and cover letters were sending successfully
+via email but arriving with **no attachment**, no error shown. Root
+cause: files were stored on local disk (`UPLOAD_DIR/resumes/...`), and
+Render's free tier **wipes the filesystem on every deploy**. The
+database record survived (filename, extracted text, `stored_path`), but
+the actual file bytes on disk didn't - and the attach step checked
+`if path.exists()` and silently skipped it when false, rather than
+raising an error. So it looked like it worked.
+
+**Fix**: files are now stored directly in MongoDB as base64
+(`file_content_base64` field on the resume/cover-letter document)
+instead of on local disk - Atlas persists independently of app deploys,
+so this fixes the root cause rather than working around it. Resumes/
+cover letters are small (KB), comfortably within MongoDB's 16MB
+per-document limit. `resume_parser.py` now extracts text directly from
+bytes (`io.BytesIO`) instead of a file path - no temp files needed.
+Every email provider's attachment handling (`custom`, `mailjet`,
+`brevo`, `sendgrid`, `smtp`) was updated to accept `(bytes, filename)`
+tuples instead of `(path, filename)`. Verified end-to-end with a test
+that confirms both attachments arrive byte-for-byte identical to the
+original upload.
+
+**If you uploaded a resume/cover letter before this fix deployed**,
+re-upload it now - the old disk-stored file is already gone from a
+previous deploy's filesystem wipe, so there's nothing to migrate; a
+fresh upload just works correctly going forward.
+
+Also added inline **Remove** buttons directly on the Resumes and Jobs
+list rows (previously only available after opening the detail panel) -
+works for jobs of any status, including `applied`.

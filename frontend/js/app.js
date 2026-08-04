@@ -120,16 +120,27 @@ async function loadResumes() {
     return;
   }
   resumes.forEach((r) => {
-    const item = document.createElement("button");
-    item.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center";
+    const item = document.createElement("div");
+    item.className = "list-group-item d-flex justify-content-between align-items-center";
     item.innerHTML = `
-      <span>
+      <span class="flex-grow-1" style="cursor:pointer" data-action="open">
         ${r.is_default ? "⭐ " : ""}<strong>${r.filename}</strong>
         <span class="text-muted small ms-2">v${r.current_version} · ${new Date(r.uploaded_at).toLocaleString()}</span>
       </span>
-      <span class="badge bg-secondary">${r.file_type}</span>
+      <span class="badge bg-secondary me-2">${r.file_type}</span>
+      <button class="btn btn-sm btn-outline-danger" data-action="remove">Remove</button>
     `;
-    item.addEventListener("click", () => openResumeDetail(r.id));
+    item.querySelector('[data-action="open"]').addEventListener("click", () => openResumeDetail(r.id));
+    item.querySelector('[data-action="remove"]').addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${r.filename}"? This can't be undone.`)) return;
+      await fetch(`${API}/api/resumes/${r.id}`, { method: "DELETE" });
+      loadResumes();
+      if (currentResumeId === r.id) {
+        document.getElementById("resume-detail-card").classList.add("d-none");
+        currentResumeId = null;
+      }
+    });
     list.appendChild(item);
   });
 }
@@ -255,20 +266,31 @@ async function loadJobs() {
     return;
   }
   jobs.forEach((j) => {
-    const item = document.createElement("button");
-    item.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center";
+    const item = document.createElement("div");
+    item.className = "list-group-item d-flex justify-content-between align-items-center";
     const matchBadge = j.match_percent !== null && j.match_percent !== undefined
       ? `<span class="badge bg-primary ms-2">${j.match_percent}% match</span>`
       : "";
     item.innerHTML = `
-      <span>
+      <span class="flex-grow-1" style="cursor:pointer" data-action="open">
         <strong>${j.title}</strong> @ ${j.company}
         <span class="text-muted small ms-2">${j.location || ""}</span>
         ${matchBadge}
       </span>
-      <span class="badge bg-secondary">${j.status}</span>
+      <span class="badge bg-secondary me-2">${j.status}</span>
+      <button class="btn btn-sm btn-outline-danger" data-action="remove">Remove</button>
     `;
-    item.addEventListener("click", () => openJobDetail(j.id));
+    item.querySelector('[data-action="open"]').addEventListener("click", () => openJobDetail(j.id));
+    item.querySelector('[data-action="remove"]').addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${j.title}" @ ${j.company}? This can't be undone (works regardless of status, including applied).`)) return;
+      await fetch(`${API}/api/jobs/${j.id}`, { method: "DELETE" });
+      loadJobs();
+      if (currentJobId === j.id) {
+        document.getElementById("job-detail-card").classList.add("d-none");
+        currentJobId = null;
+      }
+    });
     list.appendChild(item);
   });
 }

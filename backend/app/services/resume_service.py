@@ -3,17 +3,23 @@ Resume management: upload (PDF/DOCX), text extraction, version history,
 default-resume selection, and AI-powered resume analysis (skills found,
 ATS-style improvement suggestions).
 
-Files are stored on disk under UPLOAD_DIR/resumes/{resume_id}/, metadata
-and extracted text live in Mongo (`resumes` + `resumes_versions`).
+File bytes are stored directly in Mongo (base64, `file_content_base64`
+field) rather than on local disk. This matters: Render's free tier
+wipes the filesystem on every deploy, which was silently breaking
+resume/cover-letter attachments in application emails - the DB record
+survived, the actual file on disk didn't, and the attach step just
+skipped the missing file without erroring. Mongo Atlas persists
+independently of app deploys, so this fixes it properly rather than
+just working around it. Resumes/cover letters are small (KB, not MB),
+well within a single document's 16MB limit.
 """
 from datetime import datetime, timezone
-from pathlib import Path
+import base64
 from bson import ObjectId
 from fastapi import UploadFile
 
-from app.config.env import env_settings
 from app.database.mongo import get_db
-from app.services.resume_parser import extract_text
+from app.services.resume_parser import extract_text_from_bytes
 from app.services.ai_provider import get_ai_provider
 from app.services import config_service
 
@@ -30,21 +36,8 @@ Resume text:
 """
 
 
-def _resumes_dir(resume_id: str) -> Path:
-    d = Path(env_settings.upload_dir) / "resumes" / resume_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-async def _save_upload(resume_id: str, version: int, file: UploadFile) -> str:
-    ext = Path(file.filename).suffix.lower()
-    dest = _resumes_dir(resume_id) / f"v{version}{ext}"
-    content = await file.read()
-    dest.write_bytes(content)
-    return str(dest)
-
-
 def _validate_ext(filename: str) -> str:
+    from pathlib import Path
     ext = Path(filename).suffix.lower()
     if ext not in (".pdf", ".docx"):
         raise ValueError("Only .pdf and .docx resumes are supported")
@@ -55,34 +48,32 @@ async def upload_resume(file: UploadFile, is_default: bool = False) -> dict:
     ext = _validate_ext(file.filename)
     db = get_db()
 
+    content = await file.read()
+    text = extract_text_from_bytes(content, file.filename)
+    content_b64 = base64.b64encode(content).decode("ascii")
+
+    now = datetime.now(timezone.utc)
     doc = {
         "filename": file.filename,
         "file_type": ext.lstrip("."),
         "is_default": is_default,
         "current_version": 1,
-        "extracted_text": "",
-        "uploaded_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc),
+        "extracted_text": text,
+        "file_content_base64": content_b64,
+        "uploaded_at": now,
+        "updated_at": now,
     }
     result = await db.resumes.insert_one(doc)
     resume_id = str(result.inserted_id)
-
-    stored_path = await _save_upload(resume_id, 1, file)
-    text = extract_text(stored_path)
-
-    await db.resumes.update_one(
-        {"_id": result.inserted_id},
-        {"$set": {"extracted_text": text, "stored_path": stored_path}},
-    )
 
     await db.resumes_versions.insert_one(
         {
             "resume_id": resume_id,
             "version": 1,
             "filename": file.filename,
-            "stored_path": stored_path,
+            "file_content_base64": content_b64,
             "extracted_text": text,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": now,
         }
     )
 
@@ -99,18 +90,21 @@ async def add_version(resume_id: str, file: UploadFile) -> dict:
     if not resume:
         raise ValueError("Resume not found")
 
+    content = await file.read()
+    text = extract_text_from_bytes(content, file.filename)
+    content_b64 = base64.b64encode(content).decode("ascii")
+
     new_version = resume["current_version"] + 1
-    stored_path = await _save_upload(resume_id, new_version, file)
-    text = extract_text(stored_path)
+    now = datetime.now(timezone.utc)
 
     await db.resumes_versions.insert_one(
         {
             "resume_id": resume_id,
             "version": new_version,
             "filename": file.filename,
-            "stored_path": stored_path,
+            "file_content_base64": content_b64,
             "extracted_text": text,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": now,
         }
     )
 
@@ -122,8 +116,8 @@ async def add_version(resume_id: str, file: UploadFile) -> dict:
                 "filename": file.filename,
                 "file_type": ext.lstrip("."),
                 "extracted_text": text,
-                "stored_path": stored_path,
-                "updated_at": datetime.now(timezone.utc),
+                "file_content_base64": content_b64,
+                "updated_at": now,
             }
         },
     )
@@ -133,10 +127,7 @@ async def add_version(resume_id: str, file: UploadFile) -> dict:
 async def list_resumes() -> list[dict]:
     db = get_db()
     resumes = await db.resumes.find().sort("uploaded_at", -1).to_list(length=200)
-    out = []
-    for r in resumes:
-        out.append(_to_summary(r))
-    return out
+    return [_to_summary(r) for r in resumes]
 
 
 async def get_resume(resume_id: str) -> dict:
@@ -153,13 +144,15 @@ async def get_default_resume() -> dict | None:
     return _to_detail(r) if r else None
 
 
-async def get_resume_file(resume_id: str) -> tuple[str, str]:
-    """Returns (stored_path, filename) for attaching the actual file to an email."""
+async def get_resume_file(resume_id: str) -> tuple[bytes, str]:
+    """Returns (file_bytes, filename) for attaching the actual file to an email."""
     db = get_db()
     r = await db.resumes.find_one({"_id": ObjectId(resume_id)})
     if not r:
         raise ValueError("Resume not found")
-    return r.get("stored_path", ""), r.get("filename", "resume")
+    b64 = r.get("file_content_base64", "")
+    content = base64.b64decode(b64) if b64 else b""
+    return content, r.get("filename", "resume")
 
 
 async def set_default_resume(resume_id: str) -> dict:
@@ -181,17 +174,8 @@ async def delete_resume(resume_id: str) -> None:
     if not resume:
         raise ValueError("Resume not found")
 
-    versions = await db.resumes_versions.find({"resume_id": resume_id}).to_list(length=1000)
-    for v in versions:
-        p = Path(v.get("stored_path", ""))
-        if p.exists():
-            p.unlink()
     await db.resumes_versions.delete_many({"resume_id": resume_id})
     await db.resumes.delete_one({"_id": ObjectId(resume_id)})
-
-    resumes_dir = _resumes_dir(resume_id)
-    if resumes_dir.exists() and not any(resumes_dir.iterdir()):
-        resumes_dir.rmdir()
 
     if resume.get("is_default"):
         await config_service.patch_config({"default_resume": ""})

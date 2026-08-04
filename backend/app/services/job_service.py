@@ -223,27 +223,30 @@ async def apply_via_email(
     job = await get_job(job_id)
 
     if resume_id:
-        resume_path, resume_filename = await resume_service.get_resume_file(resume_id)
+        resume_content, resume_filename = await resume_service.get_resume_file(resume_id)
     else:
         default_resume = await resume_service.get_default_resume()
         if not default_resume:
             raise ValueError("No resume specified and no default resume set - upload one first")
-        resume_path, resume_filename = await resume_service.get_resume_file(default_resume["id"])
+        resume_content, resume_filename = await resume_service.get_resume_file(default_resume["id"])
 
-    cover_letter_path, cover_letter_filename = "", ""
+    if not resume_content:
+        raise ValueError("Resume file content is missing - try re-uploading the resume")
+
+    cover_letter_content, cover_letter_filename = b"", ""
     if cover_letter_id:
-        cover_letter_path, cover_letter_filename = await cover_letter_service.get_cover_letter_file(cover_letter_id)
+        cover_letter_content, cover_letter_filename = await cover_letter_service.get_cover_letter_file(cover_letter_id)
     else:
         default_cl = await cover_letter_service.get_default_cover_letter()
         if default_cl:
-            cover_letter_path, cover_letter_filename = await cover_letter_service.get_cover_letter_file(default_cl["id"])
+            cover_letter_content, cover_letter_filename = await cover_letter_service.get_cover_letter_file(default_cl["id"])
 
     result = await email_service.send_application_email(
         job=job,
         hr_email=hr_email,
-        resume_path=resume_path,
+        resume_content=resume_content,
         resume_filename=resume_filename,
-        cover_letter_path=cover_letter_path,
+        cover_letter_content=cover_letter_content,
         cover_letter_filename=cover_letter_filename,
         subject_override=subject_override,
         html_override=html_override,

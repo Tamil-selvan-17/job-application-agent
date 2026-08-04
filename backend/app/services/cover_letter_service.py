@@ -4,24 +4,22 @@ version history, since cover letters are typically swapped out wholesale
 rather than iterated on in place). Setting a default keeps
 config.default_cover_letter in sync, same as resumes.
 
+File bytes stored directly in Mongo (base64) rather than local disk -
+same reason as resume_service.py: Render's free tier wipes the
+filesystem on every deploy, which was silently breaking attachments.
+
 AI-generated cover letters (tailored per job) are a separate future
 feature - this stage covers upload + storage + default selection only.
 """
 from datetime import datetime, timezone
 from pathlib import Path
+import base64
 from bson import ObjectId
 from fastapi import UploadFile
 
-from app.config.env import env_settings
 from app.database.mongo import get_db
-from app.services.resume_parser import extract_text
+from app.services.resume_parser import extract_text_from_bytes
 from app.services import config_service
-
-
-def _cover_letters_dir() -> Path:
-    d = Path(env_settings.upload_dir) / "cover_letters"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def _validate_ext(filename: str) -> str:
@@ -35,25 +33,20 @@ async def upload_cover_letter(file: UploadFile, is_default: bool = False) -> dic
     ext = _validate_ext(file.filename)
     db = get_db()
 
+    content = await file.read()
+    text = extract_text_from_bytes(content, file.filename)
+    content_b64 = base64.b64encode(content).decode("ascii")
+
     doc = {
         "filename": file.filename,
         "file_type": ext.lstrip("."),
         "is_default": is_default,
-        "extracted_text": "",
+        "extracted_text": text,
+        "file_content_base64": content_b64,
         "uploaded_at": datetime.now(timezone.utc),
     }
     result = await db.cover_letters.insert_one(doc)
     cl_id = str(result.inserted_id)
-
-    dest = _cover_letters_dir() / f"{cl_id}{ext}"
-    content = await file.read()
-    dest.write_bytes(content)
-    text = extract_text(str(dest))
-
-    await db.cover_letters.update_one(
-        {"_id": result.inserted_id},
-        {"$set": {"extracted_text": text, "stored_path": str(dest)}},
-    )
 
     if is_default:
         await set_default_cover_letter(cl_id)
@@ -81,13 +74,15 @@ async def get_default_cover_letter() -> dict | None:
     return _to_detail(c) if c else None
 
 
-async def get_cover_letter_file(cl_id: str) -> tuple[str, str]:
-    """Returns (stored_path, filename) for attaching the actual file to an email."""
+async def get_cover_letter_file(cl_id: str) -> tuple[bytes, str]:
+    """Returns (file_bytes, filename) for attaching the actual file to an email."""
     db = get_db()
     c = await db.cover_letters.find_one({"_id": ObjectId(cl_id)})
     if not c:
         raise ValueError("Cover letter not found")
-    return c.get("stored_path", ""), c.get("filename", "cover_letter")
+    b64 = c.get("file_content_base64", "")
+    content = base64.b64decode(b64) if b64 else b""
+    return content, c.get("filename", "cover_letter")
 
 
 async def set_default_cover_letter(cl_id: str) -> dict:
@@ -104,9 +99,6 @@ async def delete_cover_letter(cl_id: str) -> None:
     c = await db.cover_letters.find_one({"_id": ObjectId(cl_id)})
     if not c:
         raise ValueError("Cover letter not found")
-    p = Path(c.get("stored_path", ""))
-    if p.exists():
-        p.unlink()
     await db.cover_letters.delete_one({"_id": ObjectId(cl_id)})
     if c.get("is_default"):
         await config_service.patch_config({"default_cover_letter": ""})

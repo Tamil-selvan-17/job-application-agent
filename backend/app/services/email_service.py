@@ -13,7 +13,6 @@ import socket
 import mimetypes
 import smtplib
 import ssl
-from pathlib import Path
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -68,14 +67,13 @@ async def _resolve_recipient(to: str | None) -> str | None:
     return config.get("email") or None
 
 
-def _attach_file(msg: MIMEMultipart, path: str, filename: str) -> None:
-    p = Path(path)
-    if not path or not p.exists():
+def _attach_file(msg: MIMEMultipart, content: bytes, filename: str) -> None:
+    if not content:
         return
     ctype, _ = mimetypes.guess_type(filename)
     maintype, subtype = (ctype.split("/", 1) if ctype else ("application", "octet-stream"))
     part = MIMEBase(maintype, subtype)
-    part.set_payload(p.read_bytes())
+    part.set_payload(content)
     encoders.encode_base64(part)
     part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
     msg.attach(part)
@@ -85,13 +83,13 @@ async def send_email(
     subject: str,
     html_body: str,
     to: str | None = None,
-    attachments: list[tuple[str, str]] | None = None,
+    attachments: list[tuple[bytes, str]] | None = None,
 ) -> dict:
     """
-    attachments: list of (stored_file_path, display_filename) tuples.
-    Missing/empty paths are silently skipped rather than failing the
-    whole send - a missing resume shouldn't block a notification email.
-    Routes to SMTP or SendGrid depending on EMAIL_PROVIDER.
+    attachments: list of (file_bytes, display_filename) tuples. Empty/
+    missing content is silently skipped rather than failing the whole
+    send - a missing resume shouldn't block a notification email.
+    Routes to whichever EMAIL_PROVIDER is configured.
     """
     if not is_configured():
         reasons = {
@@ -118,7 +116,7 @@ async def send_email(
     return await _send_via_smtp(subject, html_body, recipient, attachments or [])
 
 
-async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, attachments: list[tuple[bytes, str]]) -> dict:
     """
     Sends via your own self-hosted relay API instead of a third-party ESP.
     Bypasses Render's SMTP port block the same way Mailjet/Brevo/SendGrid
@@ -133,12 +131,11 @@ async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, a
     import httpx
 
     relay_attachments = []
-    for path, filename in attachments:
-        p = Path(path)
-        if not path or not p.exists():
+    for content, filename in attachments:
+        if not content:
             continue
         relay_attachments.append(
-            {"fileName": filename, "contentBase64": base64.b64encode(p.read_bytes()).decode("ascii")}
+            {"fileName": filename, "contentBase64": base64.b64encode(content).decode("ascii")}
         )
 
     body = {
@@ -167,7 +164,7 @@ async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, a
     return {"sent": True, "recipient": recipient}
 
 
-async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attachments: list[tuple[bytes, str]]) -> dict:
     """
     Sends over HTTPS via Mailjet's Send API v3.1 - bypasses Render's
     free-tier SMTP port block same as Brevo/SendGrid. Unlike Brevo,
@@ -179,16 +176,15 @@ async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attach
     import httpx
 
     mj_attachments = []
-    for path, filename in attachments:
-        p = Path(path)
-        if not path or not p.exists():
+    for content, filename in attachments:
+        if not content:
             continue
         ctype, _ = mimetypes.guess_type(filename)
         mj_attachments.append(
             {
                 "ContentType": ctype or "application/octet-stream",
                 "Filename": filename,
-                "Base64Content": base64.b64encode(p.read_bytes()).decode("ascii"),
+                "Base64Content": base64.b64encode(content).decode("ascii"),
             }
         )
 
@@ -224,7 +220,7 @@ async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attach
     return {"sent": True, "recipient": recipient}
 
 
-async def _send_via_brevo(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+async def _send_via_brevo(subject: str, html_body: str, recipient: str, attachments: list[tuple[bytes, str]]) -> dict:
     """
     Sends over HTTPS via Brevo's API - like SendGrid, this bypasses
     Render's free-tier SMTP port block. Brevo's free plan (300/day) has
@@ -234,12 +230,11 @@ async def _send_via_brevo(subject: str, html_body: str, recipient: str, attachme
     import httpx
 
     brevo_attachments = []
-    for path, filename in attachments:
-        p = Path(path)
-        if not path or not p.exists():
+    for content, filename in attachments:
+        if not content:
             continue
         brevo_attachments.append(
-            {"content": base64.b64encode(p.read_bytes()).decode("ascii"), "name": filename}
+            {"content": base64.b64encode(content).decode("ascii"), "name": filename}
         )
 
     sender = {"email": env_settings.brevo_from_email}
@@ -274,7 +269,7 @@ async def _send_via_brevo(subject: str, html_body: str, recipient: str, attachme
     return {"sent": True, "recipient": recipient}
 
 
-async def _send_via_sendgrid(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+async def _send_via_sendgrid(subject: str, html_body: str, recipient: str, attachments: list[tuple[bytes, str]]) -> dict:
     """
     Sends over HTTPS via SendGrid's API instead of raw SMTP - this is
     what makes email work on Render's free tier, which blocks outbound
@@ -288,14 +283,13 @@ async def _send_via_sendgrid(subject: str, html_body: str, recipient: str, attac
         from_block["name"] = env_settings.sendgrid_from_name
 
     sg_attachments = []
-    for path, filename in attachments:
-        p = Path(path)
-        if not path or not p.exists():
+    for content, filename in attachments:
+        if not content:
             continue
         ctype, _ = mimetypes.guess_type(filename)
         sg_attachments.append(
             {
-                "content": base64.b64encode(p.read_bytes()).decode("ascii"),
+                "content": base64.b64encode(content).decode("ascii"),
                 "filename": filename,
                 "type": ctype or "application/octet-stream",
                 "disposition": "attachment",
@@ -329,7 +323,7 @@ async def _send_via_sendgrid(subject: str, html_body: str, recipient: str, attac
     return {"sent": True, "recipient": recipient}
 
 
-async def _send_via_smtp(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+async def _send_via_smtp(subject: str, html_body: str, recipient: str, attachments: list[tuple[bytes, str]]) -> dict:
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = env_settings.smtp_from
@@ -339,8 +333,8 @@ async def _send_via_smtp(subject: str, html_body: str, recipient: str, attachmen
     body_part.attach(MIMEText(html_body, "html"))
     msg.attach(body_part)
 
-    for path, filename in (attachments or []):
-        _attach_file(msg, path, filename)
+    for content, filename in (attachments or []):
+        _attach_file(msg, content, filename)
 
     try:
         with _force_ipv4_dns():
@@ -448,20 +442,20 @@ def build_application_email_preview(job: dict, config: dict) -> dict:
 async def send_application_email(
     job: dict,
     hr_email: str,
-    resume_path: str,
+    resume_content: bytes,
     resume_filename: str,
-    cover_letter_path: str = "",
+    cover_letter_content: bytes = b"",
     cover_letter_filename: str = "",
     subject_override: str | None = None,
     html_override: str | None = None,
 ) -> dict:
     config = await config_service.get_config()
-    has_cover_letter = bool(cover_letter_path and Path(cover_letter_path).exists())
+    has_cover_letter = bool(cover_letter_content)
     html = html_override if html_override is not None else _build_application_email_html(job, config, has_cover_letter)
 
-    attachments = [(resume_path, resume_filename)]
+    attachments = [(resume_content, resume_filename)]
     if has_cover_letter:
-        attachments.append((cover_letter_path, cover_letter_filename))
+        attachments.append((cover_letter_content, cover_letter_filename))
 
     candidate_name = config.get("name") or "Candidate"
     subject = subject_override or f"Application for {job.get('title', 'Open Position')} - {candidate_name}"
