@@ -48,6 +48,8 @@ def _force_ipv4_dns():
 
 
 def is_configured() -> bool:
+    if env_settings.email_provider == "custom":
+        return bool(env_settings.custom_email_api_url and env_settings.smtp_user and env_settings.smtp_password)
     if env_settings.email_provider == "mailjet":
         return bool(env_settings.mailjet_api_key and env_settings.mailjet_api_secret and env_settings.mailjet_from_email)
     if env_settings.email_provider == "brevo":
@@ -93,6 +95,7 @@ async def send_email(
     """
     if not is_configured():
         reasons = {
+            "custom": "Custom relay not configured (set CUSTOM_EMAIL_API_URL/SMTP_USER/SMTP_PASSWORD in .env)",
             "mailjet": "Mailjet not configured (set MAILJET_API_KEY/MAILJET_API_SECRET/MAILJET_FROM_EMAIL in .env)",
             "brevo": "Brevo not configured (set BREVO_API_KEY/BREVO_FROM_EMAIL in .env)",
             "sendgrid": "SendGrid not configured (set SENDGRID_API_KEY/SENDGRID_FROM_EMAIL in .env)",
@@ -104,6 +107,8 @@ async def send_email(
     if not recipient:
         return {"sent": False, "reason": "No recipient email available (set NOTIFY_EMAIL_TO or your email in Job Search Config)"}
 
+    if env_settings.email_provider == "custom":
+        return await _send_via_custom_relay(subject, html_body, recipient, attachments or [])
     if env_settings.email_provider == "mailjet":
         return await _send_via_mailjet(subject, html_body, recipient, attachments or [])
     if env_settings.email_provider == "brevo":
@@ -111,6 +116,55 @@ async def send_email(
     if env_settings.email_provider == "sendgrid":
         return await _send_via_sendgrid(subject, html_body, recipient, attachments or [])
     return await _send_via_smtp(subject, html_body, recipient, attachments or [])
+
+
+async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:
+    """
+    Sends via your own self-hosted relay API instead of a third-party ESP.
+    Bypasses Render's SMTP port block the same way Mailjet/Brevo/SendGrid
+    do (a normal HTTPS call), but skips every ESP account-approval issue
+    entirely since it's your own Gmail credentials going to your own
+    endpoint. Matches the JSON contract:
+
+        {smtpUser, smtpPassword, smtpHost, smtpPort, to, subject,
+         htmlBody, attachments: [{fileName, contentBase64}]}
+    """
+    import base64
+    import httpx
+
+    relay_attachments = []
+    for path, filename in attachments:
+        p = Path(path)
+        if not path or not p.exists():
+            continue
+        relay_attachments.append(
+            {"fileName": filename, "contentBase64": base64.b64encode(p.read_bytes()).decode("ascii")}
+        )
+
+    body = {
+        "smtpUser": env_settings.smtp_user,
+        "smtpPassword": env_settings.smtp_password,
+        "smtpHost": env_settings.smtp_host or "smtp.gmail.com",
+        "smtpPort": env_settings.smtp_port,
+        "to": recipient,
+        "subject": subject,
+        "htmlBody": html_body,
+        "attachments": relay_attachments,
+    }
+
+    headers = {"Content-Type": "application/json"}
+    if env_settings.custom_email_api_key:
+        headers["Authorization"] = f"Bearer {env_settings.custom_email_api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(env_settings.custom_email_api_url, headers=headers, json=body)
+            if resp.status_code >= 400:
+                return {"sent": False, "reason": f"Relay {resp.status_code}: {resp.text[:300]}"}
+    except Exception as e:
+        return {"sent": False, "reason": str(e)}
+
+    return {"sent": True, "recipient": recipient}
 
 
 async def _send_via_mailjet(subject: str, html_body: str, recipient: str, attachments: list[tuple[str, str]]) -> dict:

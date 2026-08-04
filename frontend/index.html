@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Job Application Agent</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=11">
+<link rel="stylesheet" href="css/style.css?v=12">
 </head>
 <body>
 <nav class="navbar navbar-dark bg-dark">
@@ -53,10 +53,11 @@
       <div class="card-header">Email Notifications <span class="badge bg-info text-dark">configured via .env</span></div>
       <div class="card-body">
         <p class="text-muted small">
-          Set via <code>EMAIL_PROVIDER</code> in <code>backend/.env</code>: <code>mailjet</code> (recommended - free
-          forever, works immediately, no approval wait), <code>brevo</code> (free forever but needs a 1-2 day manual
-          approval first), <code>sendgrid</code> (now a 60-day trial only), or <code>smtp</code> (local dev / paid
-          Render plans - Render's free tier blocks outbound SMTP entirely). Notifications are sent for:
+          Set via <code>EMAIL_PROVIDER</code> in <code>backend/.env</code>: <code>custom</code> (your own
+          self-hosted relay - no third-party ESP needed), <code>mailjet</code> (free forever, works
+          immediately), <code>brevo</code> (free forever but needs a 1-2 day manual approval first),
+          <code>sendgrid</code> (now a 60-day trial only), or <code>smtp</code> (local dev / paid Render
+          plans - Render's free tier blocks outbound SMTP entirely). Notifications are sent for:
           new matching jobs found by the daily search, and applications due for a follow-up.
         </p>
         <p><strong>Status:</strong> <span id="email-status-text">checking...</span></p>
@@ -335,6 +336,6 @@
 
 </div>
 
-<script src="js/app.js?v=11"></script>
+<script src="js/app.js?v=12"></script>
 </body>
 </html>

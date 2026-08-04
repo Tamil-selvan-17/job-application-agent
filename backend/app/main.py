@@ -69,7 +69,7 @@ async def health():
 # real bug here (confirmed via TestClient: /api/version returned 404
 # instead of the version, which is exactly why the navbar badge showed
 # "unknown" even on a fully up-to-date deploy).
-APP_VERSION = "stage7.5-mailjet-no-approval-wait"
+APP_VERSION = "stage8-custom-email-relay"
 
 
 @app.get("/api/version")

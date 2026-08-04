@@ -38,6 +38,8 @@ class EnvSettings(BaseSettings):
 
     # Email notifications. EMAIL_PROVIDER options: "mailjet" (recommended
     # - permanent free plan, works immediately, no approval wait),
+    # "custom" (self-hosted relay you control - sends SMTP creds + email
+    # content to your own API, no third-party ESP account needed at all),
     # "brevo" (permanent free plan but requires a 1-2 day manual approval
     # ticket first), "sendgrid" (now a 60-day trial only, not permanent),
     # or "smtp" (local dev / paid Render plans - Render's free tier
@@ -46,12 +48,22 @@ class EnvSettings(BaseSettings):
     # just no-op with a clear message.
     email_provider: str = "mailjet"
 
+    # Used directly for EMAIL_PROVIDER=smtp, and also reused as the Gmail
+    # credentials sent to your own relay for EMAIL_PROVIDER=custom (so you
+    # only maintain one set of SMTP credentials, not two).
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
     notify_email_to: str = ""  # falls back to the "email" field in the job-search config if empty
+
+    # Custom relay (EMAIL_PROVIDER=custom) - your own self-hosted
+    # send-email API (e.g. a C#/.NET endpoint on infra you control).
+    # Bypasses every third-party ESP account-approval issue entirely,
+    # since it's your own Gmail credentials sent to your own endpoint.
+    custom_email_api_url: str = ""
+    custom_email_api_key: str = ""  # optional - sent as "Authorization: Bearer <key>" if set
 
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = ""  # must match your Single Sender Verified address

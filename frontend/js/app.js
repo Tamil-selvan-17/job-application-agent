@@ -553,7 +553,7 @@ async function loadEmailStatus() {
     const res = await fetch(`${API}/api/notifications/status`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const providerLabels = { mailjet: "Mailjet (HTTP API)", brevo: "Brevo (HTTP API)", sendgrid: "SendGrid (HTTP API)", smtp: "SMTP" };
+    const providerLabels = { custom: "Custom Relay (HTTP API)", mailjet: "Mailjet (HTTP API)", brevo: "Brevo (HTTP API)", sendgrid: "SendGrid (HTTP API)", smtp: "SMTP" };
     const providerLabel = providerLabels[data.provider] || data.provider;
     el.textContent = data.configured
       ? `Configured ✔ (via ${providerLabel})`
