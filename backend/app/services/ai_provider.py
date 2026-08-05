@@ -7,11 +7,26 @@ use the returned object's `.generate(...)` method. It NEVER talks to
 Ollama or Gemini directly. This is what lets you flip AI_PROVIDER in
 .env (ollama <-> gemini) and have the entire app change AI backend with
 no other code changes - just restart the server.
+
+Gemini's MODEL, unlike the provider itself, is switchable live from the
+UI (Settings tab) without a redeploy - see runtime_settings_service.py.
+This is worth having because Gemini models intermittently return 503
+(overloaded) or 429 (rate limited) - a well-documented, widespread issue
+across all Gemini models, not specific to any one API key - and each
+model has its OWN separate free-tier quota, so switching models is a
+genuinely useful escape hatch, not just cosmetic.
 """
+import asyncio
 from abc import ABC, abstractmethod
 import httpx
 
 from app.config.env import env_settings
+from app.services import runtime_settings_service
+
+# Retry Gemini calls on transient overload/rate-limit errors before giving up.
+GEMINI_RETRY_STATUS_CODES = {429, 503}
+GEMINI_MAX_RETRIES = 3
+GEMINI_RETRY_BASE_DELAY_SECONDS = 1.5
 
 
 class AIProvider(ABC):
@@ -75,41 +90,64 @@ class GeminiProvider(AIProvider):
         )
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         body = {"contents": [{"parts": [{"text": full_prompt}]}]}
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(url, json=body)
-            resp.raise_for_status()
-            data = resp.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                return ""
-            parts = candidates[0].get("content", {}).get("parts", [])
-            return "".join(p.get("text", "") for p in parts)
+
+        last_error: Exception | None = None
+        for attempt in range(GEMINI_MAX_RETRIES):
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(url, json=body)
+                    if resp.status_code in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES - 1:
+                        await asyncio.sleep(GEMINI_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        return ""
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    return "".join(p.get("text", "") for p in parts)
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES - 1:
+                    await asyncio.sleep(GEMINI_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Gemini request failed after retries")
 
     async def health_check(self) -> dict:
         if not self.api_key:
             return {"ok": False, "provider": self.name, "error": "No API key set"}
         try:
             await self.generate("ping", system="Reply with just: pong")
-            return {"ok": True, "provider": self.name}
+            return {"ok": True, "provider": self.name, "model": self.model}
         except Exception as e:
-            return {"ok": False, "provider": self.name, "error": str(e)}
+            return {"ok": False, "provider": self.name, "model": self.model, "error": str(e)}
+
+
+async def get_effective_gemini_model() -> str:
+    """The Gemini model actually in use: UI override if set, else the .env default."""
+    overrides = await runtime_settings_service.get_overrides()
+    return overrides.get("gemini_model") or env_settings.gemini_model
 
 
 async def get_ai_provider() -> AIProvider:
     """
-    Factory: reads AI_PROVIDER (and related keys) from .env and returns the
-    active provider. To switch, edit .env and restart the server:
+    Factory: reads AI_PROVIDER from .env (deliberately not UI-switchable -
+    see project notes) and returns the active provider.
 
         AI_PROVIDER=ollama   -> uses OLLAMA_BASE_URL / OLLAMA_MODEL
-        AI_PROVIDER=gemini   -> uses GEMINI_API_KEY / GEMINI_MODEL
+        AI_PROVIDER=gemini   -> uses GEMINI_API_KEY + the effective model
+                                 (UI override if set via Settings, else
+                                 GEMINI_MODEL from .env)
     """
     provider = env_settings.ai_provider
 
     if provider == "gemini":
-        return GeminiProvider(
-            api_key=env_settings.gemini_api_key,
-            model=env_settings.gemini_model,
-        )
+        model = await get_effective_gemini_model()
+        return GeminiProvider(api_key=env_settings.gemini_api_key, model=model)
     # default / fallback
     return OllamaProvider(
         base_url=env_settings.ollama_base_url,

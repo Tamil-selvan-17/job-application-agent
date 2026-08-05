@@ -138,7 +138,11 @@ async def _send_via_custom_relay(subject: str, html_body: str, recipient: str, a
             {"fileName": filename, "contentBase64": base64.b64encode(content).decode("ascii")}
         )
 
+    config = await config_service.get_config()
+    from_name = config.get("name") or ""
+
     body = {
+        "fromName": from_name,
         "smtpUser": env_settings.smtp_user,
         "smtpPassword": env_settings.smtp_password,
         "smtpHost": env_settings.smtp_host or "smtp.gmail.com",

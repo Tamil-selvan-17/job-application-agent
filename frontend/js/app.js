@@ -27,10 +27,42 @@ async function loadSettings() {
   document.getElementById("disp_ai_provider").textContent = s.ai_provider || "-";
   document.getElementById("disp_ollama_base_url").textContent = s.ollama_base_url || "-";
   document.getElementById("disp_ollama_model").textContent = s.ollama_model || "-";
-  document.getElementById("disp_gemini_model").textContent = s.gemini_model || "-";
   document.getElementById("disp_gemini_key").textContent = s.gemini_api_key_set ? "set ✔" : "not set";
+
+  const select = document.getElementById("gemini-model-select");
+  const choices = s.gemini_model_choices || [s.gemini_model];
+  select.innerHTML = choices
+    .map((m) => `<option value="${m}"${m === s.gemini_model ? " selected" : ""}>${m}</option>`)
+    .join("");
+  // If the currently active model (e.g. set directly via .env) isn't in the preset list, add it so it's not lost.
+  if (s.gemini_model && !choices.includes(s.gemini_model)) {
+    select.insertAdjacentHTML("afterbegin", `<option value="${s.gemini_model}" selected>${s.gemini_model} (current)</option>`);
+  }
+  document.getElementById("gemini-model-msg").textContent = s.gemini_model_is_override ? "(overridden from UI)" : "(from .env)";
+
   checkAiHealth();
 }
+
+document.getElementById("gemini-model-select").addEventListener("change", async (e) => {
+  const msg = document.getElementById("gemini-model-msg");
+  msg.textContent = "Switching...";
+  try {
+    const res = await fetch(`${API}/api/settings/gemini-model`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: e.target.value }),
+    });
+    if (res.ok) {
+      msg.textContent = "Switched ✔ - testing connection...";
+      checkAiHealth();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      msg.textContent = "Failed: " + (data.detail || `HTTP ${res.status}`);
+    }
+  } catch (err) {
+    msg.textContent = "Request failed: " + err.message;
+  }
+});
 
 document.getElementById("test-ai-btn").addEventListener("click", checkAiHealth);
 

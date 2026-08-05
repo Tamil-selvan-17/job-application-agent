@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Job Application Agent</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=13">
+<link rel="stylesheet" href="css/style.css?v=14">
 </head>
 <body>
 <nav class="navbar navbar-dark bg-dark">
@@ -31,16 +31,23 @@
       <div class="card-header">AI Provider <span class="badge bg-info text-dark">configured via .env</span></div>
       <div class="card-body">
         <p class="text-muted small">
-          The AI provider is set in <code>backend/.env</code> (<code>AI_PROVIDER=ollama</code> or
-          <code>AI_PROVIDER=gemini</code>), not from this UI. Edit <code>.env</code> and restart the
-          server to switch. This panel just shows what's currently active.
+          The AI provider (Ollama vs Gemini) is set in <code>backend/.env</code>, not from this UI.
+          The <b>Gemini model</b> below, however, switches immediately - useful since Gemini
+          models occasionally return 503 (overloaded) or 429 (rate limited), and each model has
+          its own separate free-tier quota, so switching is a real fix, not just cosmetic.
         </p>
         <table class="table table-sm w-auto">
           <tbody>
             <tr><th>Active Provider</th><td id="disp_ai_provider">-</td></tr>
             <tr><th>Ollama Base URL</th><td id="disp_ollama_base_url">-</td></tr>
             <tr><th>Ollama Model</th><td id="disp_ollama_model">-</td></tr>
-            <tr><th>Gemini Model</th><td id="disp_gemini_model">-</td></tr>
+            <tr>
+              <th>Gemini Model</th>
+              <td>
+                <select id="gemini-model-select" class="form-select form-select-sm d-inline-block w-auto"></select>
+                <span id="gemini-model-msg" class="ms-2"></span>
+              </td>
+            </tr>
             <tr><th>Gemini API Key</th><td id="disp_gemini_key">-</td></tr>
           </tbody>
         </table>
@@ -336,6 +343,6 @@
 
 </div>
 
-<script src="js/app.js?v=13"></script>
+<script src="js/app.js?v=14"></script>
 </body>
 </html>

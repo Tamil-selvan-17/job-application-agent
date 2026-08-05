@@ -449,6 +449,27 @@ re-upload it now - the old disk-stored file is already gone from a
 previous deploy's filesystem wipe, so there's nothing to migrate; a
 fresh upload just works correctly going forward.
 
-Also added inline **Remove** buttons directly on the Resumes and Jobs
-list rows (previously only available after opening the detail panel) -
-works for jobs of any status, including `applied`.
+## Stage 8.2 — Gemini Retry + Live Model Switching, Relay fromName
+
+**Gemini 503/429 errors** are a real, widely-documented issue across all
+Gemini models throughout 2026 - Google's own capacity, not specific to
+any one API key or setup. Two fixes:
+
+1. **Automatic retry with exponential backoff** in `GeminiProvider.generate()`
+   - up to 3 attempts on a 503 (overloaded) or 429 (rate limited)
+   response, waiting 1.5s/3s/6s between tries, before finally raising.
+   Verified with a test that simulates two 503s followed by a success.
+2. **Live model switching from the UI** (Settings tab) - unlike
+   `AI_PROVIDER` itself, which stays `.env`-only by deliberate design,
+   the Gemini *model* is now switchable without a redeploy:
+   `PUT /api/settings/gemini-model`, stored in Mongo
+   (`runtime_settings_service.py`), with `.env`'s `GEMINI_MODEL` as the
+   fallback default. Worth knowing: **Gemini's free-tier quota is
+   per-model, not a shared pool** - each model (`gemini-2.5-flash`,
+   `gemini-2.5-flash-lite`, `gemini-2.5-pro`, etc.) has its own separate
+   rate limit, so switching models is a genuine fix for a quota/overload
+   issue, not just a cosmetic option.
+
+**Custom relay**: added `fromName` (pulled from your Job Search Config's
+`name` field) to the JSON payload sent to a self-hosted relay
+(`EMAIL_PROVIDER=custom`), matching an updated relay API contract.

@@ -69,7 +69,7 @@ async def health():
 # real bug here (confirmed via TestClient: /api/version returned 404
 # instead of the version, which is exactly why the navbar badge showed
 # "unknown" even on a fully up-to-date deploy).
-APP_VERSION = "stage8.1-fix-attachments-mongo-storage-inline-delete"
+APP_VERSION = "stage8.2-gemini-retry-model-switch-relay-fromname"
 
 
 @app.get("/api/version")

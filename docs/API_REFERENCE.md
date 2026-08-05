@@ -18,8 +18,9 @@ No authentication - every endpoint is open (single-user personal tool).
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/settings` | Shows active AI provider + whether email is configured (read-only - both are set via `.env`, not this endpoint) |
-| GET | `/api/settings/ai/health` | Tests connectivity to the currently active AI provider |
+| GET | `/api/settings` | Shows active AI provider + effective Gemini model + whether email is configured. AI provider stays `.env`-only; `gemini_model` is switchable live (see below) |
+| PUT | `/api/settings/gemini-model` | Switches the Gemini model immediately, no redeploy. Body: `{"model": "gemini-2.5-flash"}`. Persists in Mongo (survives restarts); falls back to `GEMINI_MODEL` from `.env` if never set |
+| GET | `/api/settings/ai/health` | Tests connectivity to the currently active AI provider + model |
 
 ## AI
 
