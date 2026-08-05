@@ -1,9 +1,10 @@
 """
-Runs two daily jobs (per the spec's "Job Search Engine runs every day,
-frequency configurable" and "HR Reminder"):
+Runs two daily jobs:
 
 1. Job search across configured sources -> emails a digest if new jobs found
-2. Follow-up check -> emails a reminder for applications past followup_after_days
+2. Follow-up processing -> sends whichever reminder stage (1/2/3, at
+   days 3/5/8 after applying) is newly due for each applied job, and
+   auto-marks jobs "not_responded" at day 10 with no reply
 
 Note: on Render's free tier the process spins down after ~15 min idle,
 so these won't fire exactly on schedule unless something is actively
@@ -14,7 +15,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config.env import env_settings
-from app.services import job_search_service, job_service, email_service, config_service
+from app.services import job_search_service, job_service, email_service
 
 logger = logging.getLogger("scheduler")
 scheduler = AsyncIOScheduler()
@@ -34,14 +35,10 @@ async def run_daily_search():
 
 async def run_daily_followup_check():
     try:
-        config = await config_service.get_config()
-        days = int(config.get("followup_after_days", 5))
-        due = await job_service.list_followups_due(days)
-        if due:
-            await email_service.notify_followups_due(due)
-        logger.info("Follow-up check: %d due", len(due))
+        result = await job_service.process_followup_reminders()
+        logger.info("Follow-up processing: %s", result)
     except Exception:
-        logger.exception("Daily follow-up check failed")
+        logger.exception("Daily follow-up processing failed")
 
 
 def start_scheduler():

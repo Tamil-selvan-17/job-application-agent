@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, Field
 
-JobStatus = Literal["new", "saved", "applied", "rejected", "interview", "offer"]
+JobStatus = Literal["new", "saved", "applied", "rejected", "interview", "offer", "not_responded"]
 
 
 class JobCreate(BaseModel):
@@ -13,6 +13,7 @@ class JobCreate(BaseModel):
     url: str = ""
     source: str = "manual"
     salary_text: str = ""
+    hr_email: str = ""
 
 
 class JobUpdate(BaseModel):
@@ -25,6 +26,7 @@ class JobUpdate(BaseModel):
     status: JobStatus | None = None
     notes: str | None = None
     application_method: str | None = None  # "website" | "email"
+    hr_email: str | None = None
 
 
 class JobAnalysis(BaseModel):
@@ -63,7 +65,18 @@ class JobDetail(JobSummary):
     notes: str = ""
     analysis: JobAnalysis | None = None
     applied_at: datetime | None = None
-    reminder_sent_at: datetime | None = None
     application_method: str | None = None  # "website" | "email"
     application_email_to: str | None = None
-    hr_email_guess: str | None = None
+    hr_email: str | None = None          # authoritative - from Excel import or manual entry
+    hr_email_guess: str | None = None    # fallback - auto-detected from the job description text
+    # Multi-stage follow-up reminders: 1st (day 3), 2nd (day 5), 3rd (day 8),
+    # then auto-marked "not_responded" at day 10 if still no reply.
+    reminder_1_sent_at: datetime | None = None
+    reminder_2_sent_at: datetime | None = None
+    reminder_3_sent_at: datetime | None = None
+
+
+class ExcelImportResult(BaseModel):
+    imported: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)

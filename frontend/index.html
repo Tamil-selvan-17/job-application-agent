@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AI Job Application Agent</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=14">
+<link rel="stylesheet" href="css/style.css?v=15">
 </head>
 <body>
 <nav class="navbar navbar-dark bg-dark">
@@ -226,7 +226,30 @@
     <div class="card mb-3 d-none" id="followups-card">
       <div class="card-header">Follow-ups Due</div>
       <div class="card-body">
+        <p class="text-muted small mb-2">
+          Automatic schedule for applied jobs: 1st reminder at day 3, 2nd at day 5, 3rd at day 8 -
+          sent to the job's HR email if one is on file, otherwise you're notified to follow up manually.
+          Still no response by day 10 auto-marks the job "Not Responded". Runs daily; you can also
+          send early below.
+        </p>
         <div id="followups-list"></div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Import Jobs from Excel</span>
+        <a href="/api/jobs/import-excel/template" class="btn btn-sm btn-outline-secondary" download>Download Sample Template</a>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">
+          Columns: Company Name, Location, Job Description, HR Email, Role Name, Job URL, Salary (optional).
+          Use the same template every time - download it above, fill in rows, upload below.
+          The file itself is never stored, only the row data.
+        </p>
+        <input type="file" id="excel-import-input" class="form-control" accept=".xlsx" style="max-width:400px; display:inline-block">
+        <button class="btn btn-primary" id="excel-import-btn">Import</button>
+        <span id="excel-import-msg" class="ms-2"></span>
       </div>
     </div>
 
@@ -239,6 +262,7 @@
           <div class="col-md-4"><input class="form-control" id="job-location" placeholder="Location"></div>
           <div class="col-md-4"><input class="form-control" id="job-url" placeholder="Job URL (optional)"></div>
           <div class="col-md-4"><input class="form-control" id="job-salary" placeholder="Salary (optional)"></div>
+          <div class="col-md-4"><input type="email" class="form-control" id="job-hr-email-input" placeholder="HR Email (optional)"></div>
           <div class="col-12">
             <textarea class="form-control" id="job-description" rows="5" placeholder="Paste full job description here..."></textarea>
           </div>
@@ -280,12 +304,15 @@
             <option value="rejected">Rejected</option>
             <option value="interview">Interview</option>
             <option value="offer">Offer</option>
+            <option value="not_responded">Not Responded</option>
           </select>
           <button class="btn btn-sm btn-outline-danger" id="job-delete-btn">Delete</button>
           <button class="btn btn-sm btn-outline-success" id="job-analyze-btn">Analyze / ATS Match</button>
           <button class="btn btn-sm btn-primary" id="job-apply-btn">Apply Now (Website)</button>
           <div class="form-text">Opens the employer's actual page in a new tab (resolves past aggregator redirect links like Adzuna's) and marks it as "Applied" - it does not auto-fill or auto-submit any form on the company's site.</div>
         </div>
+
+        <div id="job-reminder-status" class="small text-muted mb-2"></div>
 
         <div class="border rounded p-2 mb-3 bg-white">
           <strong>Email HR / Recruiter Instead</strong>
@@ -343,6 +370,6 @@
 
 </div>
 
-<script src="js/app.js?v=14"></script>
+<script src="js/app.js?v=15"></script>
 </body>
 </html>

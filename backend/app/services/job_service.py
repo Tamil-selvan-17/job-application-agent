@@ -271,27 +271,102 @@ async def apply_via_email(
     return result
 
 
-async def list_followups_due(followup_after_days: int) -> list[dict]:
-    """Applied jobs older than `followup_after_days` that haven't had a reminder sent yet."""
+# Follow-up schedule: (days since applied, reminder stage number, doc field to check/set).
+# Day 10 with still no response auto-marks the job "not_responded" rather
+# than sending a 4th reminder - three nudges is plenty before assuming silence.
+FOLLOWUP_STAGES = [
+    (3, 1, "reminder_1_sent_at"),
+    (5, 2, "reminder_2_sent_at"),
+    (8, 3, "reminder_3_sent_at"),
+]
+AUTO_NOT_RESPONDED_AFTER_DAYS = 10
+
+
+def _days_since(dt: datetime | None) -> float | None:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+
+
+async def list_followups_due() -> list[dict]:
+    """
+    Applied jobs where at least one reminder stage (day 3/5/8) is due and
+    hasn't been sent yet. Each entry includes `next_reminder_stage`
+    (1/2/3) so the UI/scheduler knows which one to send.
+    """
     db = get_db()
-    cutoff = datetime.now(timezone.utc).timestamp() - followup_after_days * 86400
-    cutoff_dt = datetime.fromtimestamp(cutoff, tz=timezone.utc)
-    query = {
-        "status": "applied",
-        "applied_at": {"$lte": cutoff_dt},
-        "reminder_sent_at": None,
-    }
-    jobs = await db.jobs.find(query).to_list(length=200)
-    return [_to_detail(j) for j in jobs]
+    jobs = await db.jobs.find({"status": "applied", "applied_at": {"$ne": None}}).to_list(length=500)
+    due = []
+    for j in jobs:
+        days = _days_since(j.get("applied_at"))
+        if days is None:
+            continue
+        for threshold, stage_num, field in FOLLOWUP_STAGES:
+            if days >= threshold and not j.get(field):
+                detail = _to_detail(j)
+                detail["next_reminder_stage"] = stage_num
+                due.append(detail)
+                break  # only the earliest unsent stage matters for this job right now
+    return due
 
 
-async def mark_followup_sent(job_id: str) -> dict:
+async def mark_followup_sent(job_id: str, stage: int) -> dict:
+    field = {1: "reminder_1_sent_at", 2: "reminder_2_sent_at", 3: "reminder_3_sent_at"}.get(stage)
+    if not field:
+        raise ValueError(f"Invalid reminder stage: {stage}")
     db = get_db()
     await db.jobs.update_one(
         {"_id": ObjectId(job_id)},
-        {"$set": {"reminder_sent_at": datetime.now(timezone.utc)}},
+        {"$set": {field: datetime.now(timezone.utc)}},
     )
     return await get_job(job_id)
+
+
+async def process_followup_reminders() -> dict:
+    """
+    Runs the full 3/5/8/10-day cycle for every applied job: sends
+    whichever reminder stage is newly due (one at a time - if several
+    days were missed, e.g. the server was asleep, it catches up one
+    stage per run rather than blasting multiple reminders at once), and
+    auto-marks jobs "not_responded" at day 10 with no reply. Called
+    daily by the scheduler; also safe to call manually/repeatedly.
+    """
+    from app.services import email_service  # local import avoids a circular import at module load
+
+    db = get_db()
+    jobs = await db.jobs.find({"status": "applied", "applied_at": {"$ne": None}}).to_list(length=500)
+
+    reminders_sent = 0
+    marked_not_responded = 0
+
+    for j in jobs:
+        days = _days_since(j.get("applied_at"))
+        if days is None:
+            continue
+
+        if days >= AUTO_NOT_RESPONDED_AFTER_DAYS:
+            await db.jobs.update_one(
+                {"_id": j["_id"]},
+                {"$set": {"status": "not_responded", "updated_at": datetime.now(timezone.utc)}},
+            )
+            marked_not_responded += 1
+            continue
+
+        for threshold, stage_num, field in FOLLOWUP_STAGES:
+            if days >= threshold and not j.get(field):
+                job_detail = _to_detail(j)
+                result = await email_service.notify_followup_stage(job_detail, stage_num)
+                if result.get("sent"):
+                    await db.jobs.update_one(
+                        {"_id": j["_id"]},
+                        {"$set": {field: datetime.now(timezone.utc)}},
+                    )
+                    reminders_sent += 1
+                break  # one stage per job per run
+
+    return {"reminders_sent": reminders_sent, "marked_not_responded": marked_not_responded}
 
 
 async def analyze_job(job_id: str, resume_id: str | None = None) -> dict:
@@ -395,10 +470,13 @@ def _to_detail(j: dict) -> dict:
             "notes": j.get("notes", ""),
             "analysis": j.get("analysis"),
             "applied_at": j.get("applied_at"),
-            "reminder_sent_at": j.get("reminder_sent_at"),
             "application_method": j.get("application_method"),
             "application_email_to": j.get("application_email_to"),
+            "hr_email": j.get("hr_email"),
             "hr_email_guess": j.get("hr_email_guess"),
+            "reminder_1_sent_at": j.get("reminder_1_sent_at"),
+            "reminder_2_sent_at": j.get("reminder_2_sent_at"),
+            "reminder_3_sent_at": j.get("reminder_3_sent_at"),
         }
     )
     return summary

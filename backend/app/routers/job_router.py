@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import io
 
-from app.models.job_model import JobCreate, JobUpdate, JobSummary, JobDetail
-from app.services import job_service
+from app.models.job_model import JobCreate, JobUpdate, JobSummary, JobDetail, ExcelImportResult
+from app.services import job_service, excel_import_service
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -18,6 +20,39 @@ class ApplyEmailRequest(BaseModel):
 @router.post("", response_model=JobDetail)
 async def create_job(job: JobCreate):
     return await job_service.create_job(job.model_dump())
+
+
+@router.get("/import-excel/template")
+async def download_excel_template():
+    """
+    Downloads a sample .xlsx with the exact columns expected by
+    POST /import-excel (Company Name, Location, Job Description, HR
+    Email, Role Name, Job URL, Salary). Generated in memory - nothing is
+    read from or written to disk.
+    """
+    content = excel_import_service.generate_sample_excel()
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="job_import_template.xlsx"'},
+    )
+
+
+@router.post("/import-excel", response_model=ExcelImportResult)
+async def import_excel(file: UploadFile = File(...)):
+    """
+    Bulk-adds jobs from an .xlsx file (same columns as the template).
+    The uploaded file is parsed entirely in memory and discarded
+    immediately after - only the extracted row data is stored, never
+    the spreadsheet itself.
+    """
+    if not file.filename.endswith(".xlsx"):
+        raise HTTPException(400, "Please upload a .xlsx file (use the sample template)")
+    content = await file.read()
+    try:
+        return await excel_import_service.import_excel_jobs(content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("", response_model=list[JobSummary])

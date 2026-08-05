@@ -302,6 +302,37 @@ Any SMTP provider works the same way (Outlook, SendGrid/Mailgun SMTP relay, etc.
 - Brevo and SendGrid support remain in the code as alternatives if
   preferred - just change `EMAIL_PROVIDER`.
 
+## Stage 9 — Excel Bulk Import, Multi-Stage Follow-Up Automation
+
+**Excel import** (`/api/jobs/import-excel` + a matching downloadable
+template at `/api/jobs/import-excel/template`): bulk-add jobs from a
+`.xlsx` with columns Company Name, Location, Job Description, HR Email,
+Role Name, Job URL, Salary (optional). Parsed entirely in memory
+(`openpyxl` reading directly from the uploaded bytes) - the spreadsheet
+file itself is never written to disk or stored anywhere, only the
+extracted row data goes into Mongo. Column headers are matched
+case/whitespace-insensitively. Verified round-trip: generated template
+-> parsed back -> every header maps to the correct field.
+
+**`hr_email` field** added to jobs (both manual entry and Excel import)
+- distinct from the existing auto-detected `hr_email_guess`. When
+present, `hr_email` is authoritative and used first for both the
+"Email HR" apply flow and follow-up reminders.
+
+**Multi-stage automated follow-ups**, replacing the old single-reminder
+system: for every `applied` job, sends an actual follow-up email to the
+job's HR contact (not just a notification-to-self) at day 3 (1st),
+day 5 (2nd), day 8 (3rd) - each with stage-appropriate tone (brief
+check-in -> polite second follow-up -> final respectful follow-up). If
+no HR email is on file for a job, falls back to notifying the candidate
+to follow up manually instead of silently doing nothing. At day 10 with
+still no reply, the job is automatically moved to a new status,
+`not_responded`. Runs as part of the existing daily scheduler; also
+manually triggerable per-job or all-at-once from the API/UI. Verified:
+all three stages generate correctly-targeted, appropriately-worded
+emails, and the day-threshold logic (3/5/8/10) triggers exactly as
+specified across multiple test scenarios.
+
 ## Not yet built (next stages)
 
 Job scrapers requiring browser automation (LinkedIn/Naukri/etc. via

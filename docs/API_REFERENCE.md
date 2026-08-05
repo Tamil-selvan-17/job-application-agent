@@ -70,8 +70,10 @@ Same shape as resumes, no versioning.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/jobs` | Add a job manually. Body: `{title, company, description, location, url, source, salary_text}` |
-| GET | `/api/jobs` | List jobs. Query: `?status=new\|saved\|applied\|rejected\|interview\|offer`, `?min_match=70` (only jobs with an AI match score >= this; unanalyzed jobs excluded when set) |
+| POST | `/api/jobs` | Add a job manually. Body: `{title, company, description, location, url, source, salary_text, hr_email}` |
+| GET | `/api/jobs/import-excel/template` | Downloads a sample `.xlsx` with the exact expected columns |
+| POST | `/api/jobs/import-excel` | Bulk-adds jobs from an uploaded `.xlsx` (multipart, field `file`). Columns: Company Name, Location, Job Description, HR Email, Role Name, Job URL, Salary (optional). File is parsed in memory only, never stored |
+| GET | `/api/jobs` | List jobs. Query: `?status=new\|saved\|applied\|rejected\|interview\|offer\|not_responded`, `?min_match=70` (only jobs with an AI match score >= this; unanalyzed jobs excluded when set) |
 | DELETE | `/api/jobs/clear` | Bulk delete. Query: `?status=new` (default - only clears untouched listings) or `?status=all` |
 | POST | `/api/jobs/analyze-unanalyzed` | Batch-runs AI analysis on jobs with no match score yet. Query: `?resume_id=...`, `?limit=15` (cap, default 15) |
 | GET | `/api/jobs/{id}` | Full detail incl. analysis, application tracking |
@@ -83,10 +85,15 @@ Same shape as resumes, no versioning.
 | POST | `/api/jobs/{id}/apply-email` | Sends the application email (resume + cover letter attached). Body: `{hr_email, resume_id?, cover_letter_id?, subject?, html_body?}` - subject/html_body optional overrides from the preview step |
 
 ### Job status lifecycle
-`new` -> `saved` -> `applied` -> `rejected` / `interview` / `offer`
+`new` -> `saved` -> `applied` -> `rejected` / `interview` / `offer` / `not_responded`
+
+`not_responded` is set automatically by the daily follow-up processor if an applied job gets no
+reply within 10 days (see Notifications section below) - not usually set manually.
 
 ### Application tracking fields (on job detail)
-`applied_at`, `application_method` (`"website"` or `"email"`), `application_email_to`, `reminder_sent_at`, `hr_email_guess`
+`applied_at`, `application_method` (`"website"` or `"email"`), `application_email_to`, `hr_email`
+(authoritative, from Excel import or manual entry), `hr_email_guess` (auto-detected fallback),
+`reminder_1_sent_at`, `reminder_2_sent_at`, `reminder_3_sent_at`
 
 ## Job Search (automated)
 
@@ -99,10 +106,11 @@ Same shape as resumes, no versioning.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/notifications/status` | `{"configured": bool, "provider": "mailjet\|brevo\|sendgrid\|smtp"}` |
+| GET | `/api/notifications/status` | `{"configured": bool, "provider": "mailjet\|brevo\|sendgrid\|custom\|smtp"}` |
 | POST | `/api/notifications/test-email` | Sends a test email to confirm the active provider works |
-| GET | `/api/notifications/followups/due` | Applied jobs past `followup_after_days` with no reminder sent yet |
-| POST | `/api/notifications/followups/{job_id}/send` | Sends a follow-up reminder for one job and marks it reminded |
+| GET | `/api/notifications/followups/due` | Applied jobs with a reminder stage (1st/day 3, 2nd/day 5, 3rd/day 8) due and unsent. Each entry includes `next_reminder_stage` (1/2/3) |
+| POST | `/api/notifications/followups/{job_id}/send` | Sends the next-due reminder stage for one job now (to its `hr_email`/`hr_email_guess` if set, otherwise notifies you instead), and marks that stage sent |
+| POST | `/api/notifications/followups/run-all` | Manually triggers the full daily follow-up cycle now (normally runs automatically once a day) - sends all newly-due reminders and auto-marks day-10+ jobs `not_responded` |
 
 ---
 

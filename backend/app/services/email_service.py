@@ -379,6 +379,86 @@ async def notify_new_jobs(jobs: list[dict]) -> dict:
     return await send_email(f"{len(jobs)} new job(s) found", html)
 
 
+_FOLLOWUP_STAGE_TONE = {
+    1: "a brief, friendly check-in",
+    2: "a polite second follow-up",
+    3: "a final, respectful follow-up before moving on",
+}
+
+
+def _build_followup_email_html(job: dict, config: dict, stage: int) -> str:
+    name = config.get("name") or "Candidate"
+    phone = config.get("phone", "")
+    email = config.get("email", "")
+    website = config.get("website_link", "")
+    job_title = job.get("title", "the role")
+    company = job.get("company", "your company")
+    applied_at = job.get("applied_at")
+    applied_str = applied_at.strftime("%B %d, %Y") if applied_at else "recently"
+
+    website_line = f'<p><a href="{website}">{website}</a></p>' if website else ""
+
+    if stage == 1:
+        body = f"""
+        <p>I hope you're doing well. I wanted to follow up on my application for the
+        <b>{job_title}</b> position at <b>{company}</b>, submitted on {applied_str}.
+        I remain very interested in the opportunity and happy to provide any additional
+        information that would help with your evaluation.</p>
+        """
+    elif stage == 2:
+        body = f"""
+        <p>I wanted to check in again regarding my application for the <b>{job_title}</b>
+        position at <b>{company}</b> from {applied_str}. I understand hiring can take time,
+        and I remain enthusiastic about the opportunity to contribute to your team.</p>
+        """
+    else:
+        body = f"""
+        <p>I'm following up one last time on my application for the <b>{job_title}</b>
+        position at <b>{company}</b> from {applied_str}. If the role has been filled or
+        priorities have shifted, no worries at all - I'd still welcome the chance to
+        connect for any future opportunities that might be a good fit.</p>
+        """
+
+    return f"""
+    <p>Dear Hiring Team,</p>
+    {body}
+    <p>Thank you for your time and consideration.</p>
+    <p>
+      Best regards,<br>
+      <b>{name}</b><br>
+      {phone}<br>
+      {email}
+    </p>
+    {website_line}
+    """
+
+
+async def notify_followup_stage(job: dict, stage: int) -> dict:
+    """
+    Stage 1/2/3 follow-up (days 3/5/8 after applying). Sends the actual
+    follow-up correspondence to the job's HR contact if one is on file
+    (hr_email, or hr_email_guess as a fallback); if neither exists,
+    falls back to notifying the candidate themselves that a manual
+    follow-up is needed, since we have no address to write to.
+    """
+    hr_target = job.get("hr_email") or job.get("hr_email_guess")
+    config = await config_service.get_config()
+
+    if hr_target:
+        html = _build_followup_email_html(job, config, stage)
+        subject = f"Following up: {job.get('title', 'Application')} at {job.get('company', '')}"
+        return await send_email(subject, html, to=hr_target)
+
+    # No HR email on file - notify the candidate to follow up manually instead of silently doing nothing.
+    tone = _FOLLOWUP_STAGE_TONE.get(stage, "a follow-up")
+    html = f"""
+    <h3>Follow-up #{stage} due: {job.get('title','')} @ {job.get('company','')}</h3>
+    <p>No HR email is on file for this job, so {tone} couldn't be sent automatically.
+    Open the Jobs tab to add one, or follow up manually via the job's website/portal.</p>
+    """
+    return await send_email(f"Follow-up #{stage} due (no HR email on file)", html)
+
+
 async def notify_followups_due(jobs: list[dict]) -> dict:
     if not jobs:
         return {"sent": False, "reason": "No follow-ups due"}

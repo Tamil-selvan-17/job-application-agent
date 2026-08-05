@@ -363,6 +363,7 @@ document.getElementById("job-add-btn").addEventListener("click", async () => {
     location: document.getElementById("job-location").value,
     url: document.getElementById("job-url").value,
     salary_text: document.getElementById("job-salary").value,
+    hr_email: document.getElementById("job-hr-email-input").value,
     description: document.getElementById("job-description").value,
     source: "manual",
   };
@@ -379,7 +380,7 @@ document.getElementById("job-add-btn").addEventListener("click", async () => {
   if (res.ok) {
     msg.textContent = "Added ✔";
     msg.className = "ms-2 text-success";
-    ["job-title", "job-company", "job-location", "job-url", "job-salary", "job-description"].forEach(
+    ["job-title", "job-company", "job-location", "job-url", "job-salary", "job-hr-email-input", "job-description"].forEach(
       (id) => (document.getElementById(id).value = "")
     );
     loadJobs();
@@ -387,6 +388,43 @@ document.getElementById("job-add-btn").addEventListener("click", async () => {
     const err = await res.json();
     msg.textContent = "Failed: " + JSON.stringify(err.detail || err);
     msg.className = "ms-2 text-danger";
+  }
+});
+
+document.getElementById("excel-import-btn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("excel-import-input");
+  const msg = document.getElementById("excel-import-msg");
+  if (!fileInput.files[0]) {
+    msg.textContent = "Choose a .xlsx file first";
+    msg.className = "ms-2 text-danger";
+    return;
+  }
+  const btn = document.getElementById("excel-import-btn");
+  btn.disabled = true;
+  btn.textContent = "Importing...";
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  try {
+    const res = await fetch(`${API}/api/jobs/import-excel`, { method: "POST", body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      msg.textContent = `Imported ${data.imported}, skipped ${data.skipped}.`;
+      if (data.errors && data.errors.length) {
+        msg.textContent += " " + data.errors.slice(0, 3).join("; ");
+      }
+      msg.className = "ms-2 text-success";
+      fileInput.value = "";
+      loadJobs();
+    } else {
+      msg.textContent = "Import failed: " + (data.detail || `HTTP ${res.status}`);
+      msg.className = "ms-2 text-danger";
+    }
+  } catch (e) {
+    msg.textContent = "Request failed: " + e.message;
+    msg.className = "ms-2 text-danger";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Import";
   }
 });
 
@@ -401,9 +439,9 @@ async function openJobDetail(id) {
   document.getElementById("job-status-select").value = j.status;
   renderJobAnalysis(j.analysis);
 
-  // Server already extracts an email address from the JD text if present -
-  // prefill it as a starting point for "Email HR", always worth double-checking.
-  document.getElementById("job-hr-email").value = j.hr_email_guess || "";
+  // Prefer the authoritative hr_email (from Excel import or manual entry) over the
+  // auto-detected hr_email_guess from the JD text - always worth double-checking either way.
+  document.getElementById("job-hr-email").value = j.hr_email || j.hr_email_guess || "";
   document.getElementById("job-email-apply-msg").textContent = "";
   document.getElementById("job-email-preview-block").classList.add("d-none");
 
@@ -415,6 +453,15 @@ async function openJobDetail(id) {
   } else {
     statusEl.textContent = "";
   }
+
+  const reminderEl = document.getElementById("job-reminder-status");
+  const stages = [
+    ["1st (day 3)", j.reminder_1_sent_at],
+    ["2nd (day 5)", j.reminder_2_sent_at],
+    ["3rd (day 8)", j.reminder_3_sent_at],
+  ];
+  const sentStages = stages.filter(([, at]) => at).map(([label, at]) => `${label} sent ${new Date(at).toLocaleDateString()}`);
+  reminderEl.textContent = sentStages.length ? `Follow-ups: ${sentStages.join(", ")}` : "";
 }
 
 function renderJobAnalysis(analysis) {
@@ -712,11 +759,13 @@ async function loadFollowupsDue() {
     jobs.forEach((j) => {
       const row = document.createElement("div");
       row.className = "d-flex justify-content-between align-items-center border-bottom py-1";
+      const stageLabel = ["", "1st", "2nd", "3rd"][j.next_reminder_stage] || "next";
+      const target = j.hr_email || j.hr_email_guess || "(no HR email - will notify you instead)";
       row.innerHTML = `
         <span><strong>${j.title}</strong> @ ${j.company}
-          <span class="text-muted small ms-2">applied ${j.applied_at ? new Date(j.applied_at).toLocaleDateString() : ""}</span>
+          <span class="text-muted small ms-2">applied ${j.applied_at ? new Date(j.applied_at).toLocaleDateString() : ""} · ${stageLabel} reminder → ${target}</span>
         </span>
-        <button class="btn btn-sm btn-outline-primary">Send Reminder</button>
+        <button class="btn btn-sm btn-outline-primary">Send ${stageLabel} Reminder</button>
       `;
       row.querySelector("button").addEventListener("click", async (e) => {
         e.target.disabled = true;
