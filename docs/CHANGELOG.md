@@ -333,6 +333,44 @@ all three stages generate correctly-targeted, appropriately-worded
 emails, and the day-threshold logic (3/5/8/10) triggers exactly as
 specified across multiple test scenarios.
 
+## Stage 10 — UI Redesign: Modern Dashboard Look
+
+Full visual overhaul, verified with actual Playwright screenshots
+before shipping (not just "should look fine"):
+
+- **Layout**: replaced Bootstrap's default top navbar + tab strip with
+  a persistent dark sidebar (Settings/Job Search Config/Resumes/Jobs),
+  collapsing to a horizontal top bar on narrow screens. Tab-switching
+  JS was already markup-agnostic (`[data-tab]` + `.tab-pane` classes),
+  so the sidebar restructure didn't require touching any JS logic.
+- **Design tokens**: indigo/violet accent (`#5B4FE8`) instead of a
+  generic Bootstrap blue, deep navy sidebar, soft lavender-gray page
+  background - deliberately avoiding the generic "AI app" defaults
+  (no cream+terracotta, no plain near-black+neon).
+- **Typography**: Inter for UI text, **JetBrains Mono** for data (match
+  %, dates, form labels, config JSON) - a deliberate nod to this being
+  a developer's own tool, and it visually separates "data" from "prose"
+  at a glance.
+- **Status pipeline pills**: job status (`new -> saved -> applied ->
+  interview/rejected -> offer/not_responded`) now renders as
+  color-coded pills (slate -> sky -> indigo -> amber -> green/red) -
+  this is a genuine sequence with real meaning, so a distinct visual
+  treatment per stage is justified (unlike using colors/numbers
+  decoratively on unordered content).
+- Achieved primarily through CSS: overrode Bootstrap's own CSS
+  variables (`--bs-primary`, `--bs-success`, etc.) so every existing
+  `badge bg-success`/`btn btn-primary`/etc. in the JS automatically
+  picks up the new palette without needing every call site touched.
+- **Caught and fixed a real testing gap during this stage**: earlier
+  screenshot verification showed all tabs' content stacked simultaneously
+  visible - traced to this sandbox's network blocking the Bootstrap CDN
+  (403), meaning `.d-none` was never defined in that specific preview.
+  Confirmed via direct DOM inspection that tab-switching was correct all
+  along, then re-verified visually with a CSS shim for the blocked
+  utility class. Real deploys (Render, with full internet access) load
+  Bootstrap normally - this only affected the local verification step,
+  not the shipped behavior.
+
 ## Not yet built (next stages)
 
 Job scrapers requiring browser automation (LinkedIn/Naukri/etc. via

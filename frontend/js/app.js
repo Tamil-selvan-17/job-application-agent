@@ -68,21 +68,22 @@ document.getElementById("test-ai-btn").addEventListener("click", checkAiHealth);
 
 async function checkAiHealth() {
   const badge = document.getElementById("ai-status-badge");
+  const dot = document.getElementById("ai-status-dot");
   badge.textContent = "checking AI...";
-  badge.className = "badge bg-secondary";
+  dot.className = "status-dot pending";
   try {
     const res = await fetch(`${API}/api/settings/ai/health`);
     const data = await res.json();
     if (data.ok) {
-      badge.textContent = `${data.provider} ✔ connected`;
-      badge.className = "badge bg-success";
+      badge.textContent = `${data.provider} connected`;
+      dot.className = "status-dot ok";
     } else {
-      badge.textContent = `${data.provider} ✘ ${data.error || "unreachable"}`;
-      badge.className = "badge bg-danger";
+      badge.textContent = `${data.provider} ${data.error || "unreachable"}`;
+      dot.className = "status-dot bad";
     }
   } catch (e) {
     badge.textContent = "AI check failed";
-    badge.className = "badge bg-danger";
+    dot.className = "status-dot bad";
   }
 }
 
@@ -309,7 +310,7 @@ async function loadJobs() {
         <span class="text-muted small ms-2">${j.location || ""}</span>
         ${matchBadge}
       </span>
-      <span class="badge bg-secondary me-2">${j.status}</span>
+      <span class="status-pill status-${j.status} me-2">${j.status.replace('_', ' ')}</span>
       <button class="btn btn-sm btn-outline-danger" data-action="remove">Remove</button>
     `;
     item.querySelector('[data-action="open"]').addEventListener("click", () => openJobDetail(j.id));
@@ -861,12 +862,15 @@ document.getElementById("cl-upload-btn").addEventListener("click", async () => {
 
 // ---------- Version badge ----------
 async function loadVersion() {
+  const dot = document.getElementById("version-dot");
   try {
     const res = await fetch(`${API}/api/version`);
     const data = await res.json();
     document.getElementById("version-badge").textContent = data.version || "unknown";
+    dot.className = "status-dot ok";
   } catch (e) {
     document.getElementById("version-badge").textContent = "version unknown";
+    dot.className = "status-dot bad";
   }
 }
 
