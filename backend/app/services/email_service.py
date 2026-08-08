@@ -433,30 +433,55 @@ def _build_followup_email_html(job: dict, config: dict, stage: int) -> str:
     """
 
 
-async def notify_followup_stage(job: dict, stage: int) -> dict:
+def build_followup_email_preview(job: dict, config: dict, stage: int) -> dict:
+    """Returns {subject, html_body, hr_target} without sending - for review before sending."""
+    hr_target = job.get("hr_email") or job.get("hr_email_guess") or ""
+    if hr_target:
+        html = _build_followup_email_html(job, config, stage)
+        subject = f"Following up: {job.get('title', 'Application')} at {job.get('company', '')}"
+    else:
+        tone = _FOLLOWUP_STAGE_TONE.get(stage, "a follow-up")
+        subject = f"Follow-up #{stage} due (no HR email on file)"
+        html = f"""
+        <h3>Follow-up #{stage} due: {job.get('title','')} @ {job.get('company','')}</h3>
+        <p>No HR email is on file for this job, so {tone} couldn't be sent automatically.
+        Open the Jobs tab to add one, or follow up manually via the job's website/portal.</p>
+        """
+    return {"subject": subject, "html_body": html, "hr_target": hr_target}
+
+
+async def notify_followup_stage(
+    job: dict,
+    stage: int,
+    subject_override: str | None = None,
+    html_override: str | None = None,
+) -> dict:
     """
     Stage 1/2/3 follow-up (days 3/5/8 after applying). Sends the actual
     follow-up correspondence to the job's HR contact if one is on file
     (hr_email, or hr_email_guess as a fallback); if neither exists,
     falls back to notifying the candidate themselves that a manual
-    follow-up is needed, since we have no address to write to.
+    follow-up is needed, since we have no address to write to. Pass
+    subject_override/html_override (from build_followup_email_preview,
+    possibly edited) to send exactly that instead of regenerating it.
     """
     hr_target = job.get("hr_email") or job.get("hr_email_guess")
     config = await config_service.get_config()
 
     if hr_target:
-        html = _build_followup_email_html(job, config, stage)
-        subject = f"Following up: {job.get('title', 'Application')} at {job.get('company', '')}"
+        html = html_override if html_override is not None else _build_followup_email_html(job, config, stage)
+        subject = subject_override or f"Following up: {job.get('title', 'Application')} at {job.get('company', '')}"
         return await send_email(subject, html, to=hr_target)
 
     # No HR email on file - notify the candidate to follow up manually instead of silently doing nothing.
     tone = _FOLLOWUP_STAGE_TONE.get(stage, "a follow-up")
-    html = f"""
+    html = html_override if html_override is not None else f"""
     <h3>Follow-up #{stage} due: {job.get('title','')} @ {job.get('company','')}</h3>
     <p>No HR email is on file for this job, so {tone} couldn't be sent automatically.
     Open the Jobs tab to add one, or follow up manually via the job's website/portal.</p>
     """
-    return await send_email(f"Follow-up #{stage} due (no HR email on file)", html)
+    subject = subject_override or f"Follow-up #{stage} due (no HR email on file)"
+    return await send_email(subject, html)
 
 
 async def notify_followups_due(jobs: list[dict]) -> dict:

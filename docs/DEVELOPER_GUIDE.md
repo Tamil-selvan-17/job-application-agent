@@ -51,7 +51,9 @@ job-agent/
 │   │       ├── job_sources.py        # Remotive/Arbeitnow/Adzuna connectors
 │   │       ├── job_search_service.py # Orchestrates search + all filtering
 │   │       ├── job_matching.py       # Keyword/location/language/experience matchers
-│   │       ├── email_service.py      # Mailjet/Brevo/SendGrid/SMTP senders
+│   │       ├── email_service.py      # Custom relay/Mailjet/Brevo/SendGrid/SMTP senders
+│   │       ├── excel_import_service.py  # Bulk job import from .xlsx (in-memory, never stored)
+│   │       ├── runtime_settings_service.py  # Mongo-backed UI-switchable settings (e.g. Gemini model)
 │   │       └── scheduler_service.py  # APScheduler daily jobs
 │   ├── uploads/                      # Resume/cover-letter files land here
 │   ├── requirements.txt
@@ -86,16 +88,22 @@ All actual logic (Mongo queries, AI calls, file handling) lives in `services/`. 
 ## Key Abstractions (and why they exist)
 
 ### AI Provider (`services/ai_provider.py`)
-Every AI-powered feature calls `get_ai_provider()` and then `.generate(prompt, system)` - never talks to Ollama or Gemini directly. Reads `AI_PROVIDER` from `.env` at call time. To add a new AI provider (e.g. Claude, OpenAI): subclass `AIProvider`, implement `generate()` and `health_check()`, register it in the `get_ai_provider()` factory.
+Every AI-powered feature calls `get_ai_provider()` and then `.generate(prompt, system)` - never talks to Ollama or Gemini directly. Reads `AI_PROVIDER` from `.env` at call time (deliberately not UI-switchable). Gemini calls auto-retry 3x with backoff on 503/429 (Google-side overload/rate-limit, common across all Gemini models). To add a new AI provider (e.g. Claude, OpenAI): subclass `AIProvider`, implement `generate()` and `health_check()`, register it in the `get_ai_provider()` factory.
+
+### Runtime Settings (`services/runtime_settings_service.py`)
+A small, deliberate exception to ".env-only" config: the **Gemini model** (not the provider) is switchable live from the UI, stored as a Mongo override that `get_ai_provider()` checks ahead of the `.env` default. This exists because each Gemini model has its own separate free-tier quota - being stuck on one overloaded/rate-limited model until a redeploy isn't useful. Follow this same pattern (Mongo override, `.env` fallback) for any other setting that genuinely benefits from being changed without a restart.
 
 ### Email Provider (`services/email_service.py`)
-Same pattern - `send_email()` dispatches to `_send_via_mailjet/_send_via_brevo/_send_via_sendgrid/_send_via_smtp` based on `EMAIL_PROVIDER`. All four implement the same signature: `(subject, html_body, recipient, attachments) -> dict`. To add a new provider, write a `_send_via_x()` function and add one `if` branch in `send_email()`.
+Same dispatch pattern as AI - `send_email()` routes to `_send_via_custom_relay/_send_via_mailjet/_send_via_brevo/_send_via_sendgrid/_send_via_smtp` based on `EMAIL_PROVIDER`. All five implement the same signature: `(subject, html_body, recipient, attachments) -> dict` where `attachments` is `list[tuple[bytes, str]]` (content, filename) - not file paths, since files are stored in Mongo (see Gotchas). `custom` posts to your own self-hosted relay API instead of a third-party ESP - useful since brand-new ESP accounts commonly get flagged/gated (Mailjet auto-blocks, Brevo requires manual approval) as an anti-abuse measure. To add a new provider, write a `_send_via_x()` function and add one `if` branch in `send_email()`.
 
 ### Job Sources (`services/job_sources.py`)
 Each source is a function `fetch_x(config: dict) -> list[dict]` returning normalized listings (`title, company, description, location, url, source, salary_text, job_type, posted_at`). Registered in `SOURCE_FETCHERS`. Filtering (relevance, location, language, etc.) is **not** done per-source - it's centralized in `job_search_service.py` so every source gets consistent treatment. To add a source: write the fetcher, register it in `SOURCE_FETCHERS`.
 
 ### Config-Driven Behavior
-The Job Search Config (name, skills, locations, salary range, keywords, job sources, language, etc.) is stored as one document in Mongo and edited as raw JSON from the UI - not scattered across a dozen form fields. `default_resume` and `default_cover_letter` in that JSON are **derived, not hand-typed** - they auto-sync whenever you mark a resume/cover letter as default (see `resume_service.set_default_resume()`).
+The Job Search Config (name, skills, locations, salary range, keywords, job sources, language, `job_posted_within_days`, etc.) is stored as one document in Mongo and edited as raw JSON from the UI - not scattered across a dozen form fields. `default_resume` and `default_cover_letter` in that JSON are **derived, not hand-typed** - they auto-sync whenever you mark a resume/cover letter as default (see `resume_service.set_default_resume()`).
+
+### Frontend Design System (`frontend/css/style.css`)
+A dark-sidebar dashboard layout (not Bootstrap's default top-nav-tabs) with CSS custom properties for the token system (colors, spacing, radii - see the `:root` block). Bootstrap's own CSS variables (`--bs-primary`, `--bs-success`, etc.) are overridden there too, so existing `badge bg-success`/`btn btn-primary`/etc. classes throughout `app.js` automatically pick up the palette without needing every call site touched. Job status renders as color-coded `.status-pill.status-{value}` pills (a real pipeline sequence, so the per-stage color treatment is deliberate, not decorative). Tab-switching JS (`[data-tab]` + `.tab-pane`/`.d-none`) is markup-agnostic, so the sidebar layout itself can be restructured freely without touching JS.
 
 ## Local Development Setup
 

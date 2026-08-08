@@ -371,6 +371,30 @@ before shipping (not just "should look fine"):
   Bootstrap normally - this only affected the local verification step,
   not the shipped behavior.
 
+## Stage 11 — Posting-Freshness Filter, Follow-Up Preview, Full Docs Refresh
+
+- **`job_posted_within_days`** added to the Job Search Config (default
+  45, matches the existing `is_recent_enough()` filter which previously
+  had this hardcoded). Editable in Settings -> Job Search Preferences,
+  or directly in the config JSON. Also passed through to Adzuna's own
+  server-side `max_days_old` search param for consistency. Verified:
+  jobs older than the threshold correctly rejected, jobs with no
+  parseable date still kept (benefit of the doubt, unchanged behavior).
+- **Follow-up emails now preview before sending**, same pattern as the
+  application-email flow: click "Preview" on a due reminder -> review/
+  edit subject and body -> "Confirm & Send". Backend:
+  `email_service.build_followup_email_preview()` +
+  `POST /api/notifications/followups/{id}/preview`; both the manual
+  send and the automated daily scheduler still work exactly as before,
+  this only changes the manual single-job flow to require confirmation.
+- **Full documentation refresh** - README, Developer Guide, API
+  Reference, and Deployment Guide all updated to reflect everything
+  built through Stage 10 (Excel import, multi-stage follow-ups, custom
+  relay, live model switching, MongoDB file storage, new UI) - several
+  of these had drifted behind the actual code across the last few
+  stages, which is worth watching for going forward: update docs in the
+  same commit as the feature, not as a separate later cleanup pass.
+
 ## Not yet built (next stages)
 
 Job scrapers requiring browser automation (LinkedIn/Naukri/etc. via

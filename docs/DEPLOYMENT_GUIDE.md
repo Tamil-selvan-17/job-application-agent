@@ -71,9 +71,38 @@ If you created the service manually as a plain **Web Service** instead of via **
 
 ## 5. Set up email (pick one)
 
-Render's **free tier blocks all outbound SMTP** (ports 25/465/587) - this is a platform-wide policy affecting most free cloud hosts, not specific to this app. The fix is an HTTP-based email API instead of raw SMTP. Three options, in order of recommendation:
+Render's **free tier blocks all outbound SMTP** (ports 25/465/587) - this is a platform-wide policy affecting most free cloud hosts, not specific to this app. The fix is an HTTP-based email API instead of raw SMTP. Four options, in order of recommendation:
 
-### Option A: Mailjet (recommended - works immediately)
+### Option A: Your own relay (most reliable - no third-party ESP account at all)
+If you (or your company) have a server with normal, unrestricted outbound internet, host a tiny authenticated API there that does the actual SMTP send - the main app just makes a normal HTTPS call to it, same underlying pattern as Mailjet/Brevo, except you control it entirely and skip every ESP account-approval/blocking issue.
+
+Expected JSON contract (adjust `email_service._send_via_custom_relay()` if yours differs):
+```json
+{
+  "fromName": "Your Name",
+  "smtpUser": "you@gmail.com",
+  "smtpPassword": "your-app-password",
+  "smtpHost": "smtp.gmail.com",
+  "smtpPort": 587,
+  "to": "recipient@example.com",
+  "subject": "...",
+  "htmlBody": "...",
+  "attachments": [{"fileName": "Resume.pdf", "contentBase64": "..."}]
+}
+```
+Render env vars:
+```
+EMAIL_PROVIDER=custom
+CUSTOM_EMAIL_API_URL=https://your-relay-host/api/sendmail
+CUSTOM_EMAIL_API_KEY=<optional, if your relay checks an Authorization header>
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=<your gmail>
+SMTP_PASSWORD=<gmail app password>
+SMTP_FROM=<your gmail>
+```
+
+### Option B: Mailjet (best third-party option - works immediately)
 1. Sign up free at [mailjet.com](https://www.mailjet.com) - 200 emails/day, 6000/month, no credit card
 2. **Account Settings -> Sender addresses & domains** -> add your email -> click the confirmation link sent to it
 3. **Account Settings -> REST API -> API Key Management** -> copy the **API Key** and **Secret Key**
@@ -85,8 +114,9 @@ Render's **free tier blocks all outbound SMTP** (ports 25/465/587) - this is a p
    MAILJET_FROM_EMAIL=<your verified sender email>
    MAILJET_FROM_NAME=<your name>
    ```
+   Note: brand-new Mailjet accounts can occasionally get auto-flagged/temporarily blocked as an anti-abuse measure (a common signature every ESP watches for: new account immediately sending via API) - if so, use their support chat to request a review, or fall back to another option below.
 
-### Option B: Brevo (also free forever, but needs manual approval)
+### Option C: Brevo (also free forever, but needs manual approval)
 1. Sign up free at [brevo.com](https://www.brevo.com) - 300/day, no expiry
 2. **Settings -> Senders, Domains & Dedicated IPs** -> add sender -> enter the 6-digit code emailed to you (click "Add this sender anyway" if you don't own a custom domain)
 3. **Settings -> SMTP & API -> API Keys** -> generate a key (leave "Create MCP server API key" off - not needed)
@@ -99,14 +129,14 @@ Render's **free tier blocks all outbound SMTP** (ports 25/465/587) - this is a p
    BREVO_FROM_NAME=<your name>
    ```
 
-### Option C: SendGrid (free tier is now a 60-day trial only)
+### Option D: SendGrid (free tier is now a 60-day trial only)
 Same idea (Single Sender Verification, no domain needed), but SendGrid removed their permanent free plan in 2025 - only useful short-term. See `.env.example` for the exact vars.
 
 ### If a provider blocks/flags your account
-This happens because brand-new accounts immediately sending via API is a common spam signature every ESP watches for - it's about the account, not your code. If one provider is stuck, try another from the list above rather than debugging further; all three are pre-wired in `email_service.py`, just switch `EMAIL_PROVIDER`.
+This happens because brand-new accounts immediately sending via API is a common spam signature every ESP watches for - it's about the account, not your code. If one provider is stuck, try another from the list above rather than debugging further; all four are pre-wired in `email_service.py`, just switch `EMAIL_PROVIDER`.
 
 ### The paid alternative (skips ESP setup entirely)
-If you'd rather not deal with any ESP account: upgrade Render to its smallest paid instance type (~$7/month), which removes the SMTP port block, then use `EMAIL_PROVIDER=smtp` with a [Gmail App Password](https://myaccount.google.com/apppasswords) (requires 2-Step Verification enabled first). This is the simplest path if the free-tier ESP approval process is more friction than it's worth.
+If you'd rather not deal with any ESP account and don't have your own relay host: upgrade Render to its smallest paid instance type (~$7/month), which removes the SMTP port block, then use `EMAIL_PROVIDER=smtp` with a [Gmail App Password](https://myaccount.google.com/apppasswords) (requires 2-Step Verification enabled first).
 
 ## 6. (Optional) Adzuna - real job listings for your country
 
@@ -120,6 +150,12 @@ Remotive and Arbeitnow are Western remote-job boards with very little coverage o
    ADZUNA_COUNTRY=in
    ```
    (`ADZUNA_COUNTRY` is any ISO country code Adzuna supports - `in`, `gb`, `us`, etc.)
+
+Also useful without any extra signup: **Excel bulk import** (Jobs tab -> download the sample
+template, fill in rows, upload) lets you add jobs manually sourced from anywhere - LinkedIn,
+Naukri, a recruiter's email, etc. - without needing a scraper. And `job_posted_within_days` in
+your Job Search Config (default 45, editable in Settings -> Job Search Preferences) controls how
+old a listing can be before it's filtered out.
 
 ## 7. Verify the deployment
 
@@ -188,3 +224,15 @@ Check `/api/version` first - filtering fixes only apply going forward, they don'
 
 ### "Apply Now" still lands on the aggregator's page
 Only true for jobs added *after* the resolve-url fix (Stage 7+) - check `/api/version`. Some redirect pages use JavaScript instead of HTTP redirects, which has a regex fallback but isn't foolproof for every possible redirect implementation.
+
+### Resume/cover letter emails send successfully but arrive with no attachment
+Fixed in Stage 8.1 - files used to be stored on local disk, which Render's free tier wipes on every deploy. They're now stored in MongoDB instead. If you're still seeing this, check `/api/version` is `stage8.1` or later, and **re-upload** your resume/cover letter once after updating (anything uploaded before that fix has no recoverable file bytes - only the database record survived).
+
+### Navbar/sidebar version badge shows "unknown" even though you just deployed
+This was a real routing bug (Stage 7.4): `/api/health` and `/api/version` were defined *after* the frontend's catch-all static file mount in `main.py`, which silently shadowed them. Fixed by moving them before the mount. If you see this on a very old deploy, update to the latest code.
+
+### AI: `503 Service Unavailable` on Gemini
+A real, widely-reported Google-side capacity issue across all Gemini models (especially spikes after new model releases), not specific to your key. The app retries automatically 3x with backoff. If it's still failing, switch models in Settings -> the Gemini Model dropdown (each model has its own separate free-tier quota, so a different model may not be rate-limited/overloaded even when another is).
+
+### An email provider (Mailjet/Brevo/SendGrid) blocks or flags your account
+Common anti-abuse behavior for brand-new accounts immediately sending via API - not a bug in your setup. See Section 5's "If a provider blocks/flags your account" for the fix (usually: contact their support, or switch to a different provider from the list while waiting).

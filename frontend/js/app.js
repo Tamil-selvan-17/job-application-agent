@@ -766,19 +766,9 @@ async function loadFollowupsDue() {
         <span><strong>${j.title}</strong> @ ${j.company}
           <span class="text-muted small ms-2">applied ${j.applied_at ? new Date(j.applied_at).toLocaleDateString() : ""} · ${stageLabel} reminder → ${target}</span>
         </span>
-        <button class="btn btn-sm btn-outline-primary">Send ${stageLabel} Reminder</button>
+        <button class="btn btn-sm btn-outline-primary">Preview ${stageLabel} Reminder</button>
       `;
-      row.querySelector("button").addEventListener("click", async (e) => {
-        e.target.disabled = true;
-        try {
-          const res = await fetch(`${API}/api/notifications/followups/${j.id}/send`, { method: "POST" });
-          const data = await res.json().catch(() => ({}));
-          e.target.textContent = data.sent ? "Sent ✔" : "Failed: " + (data.reason || `HTTP ${res.status}`);
-          if (data.sent) loadFollowupsDue();
-        } catch (err) {
-          e.target.textContent = "Error: " + err.message;
-        }
-      });
+      row.querySelector("button").addEventListener("click", () => openFollowupPreview(j.id, j.next_reminder_stage, j.title, j.company));
       list.appendChild(row);
     });
   } catch (e) {
@@ -786,6 +776,75 @@ async function loadFollowupsDue() {
     // Non-fatal: leave the follow-ups card hidden rather than breaking the rest of the page.
   }
 }
+
+let currentFollowupJobId = null;
+let currentFollowupStage = null;
+
+async function openFollowupPreview(jobId, stage, title, company) {
+  currentFollowupJobId = jobId;
+  currentFollowupStage = stage;
+  const block = document.getElementById("followup-preview-block");
+  const msg = document.getElementById("followup-send-msg");
+  msg.textContent = "";
+  try {
+    const res = await fetch(`${API}/api/notifications/followups/${jobId}/preview?stage=${stage}`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      document.getElementById("followup-preview-title").textContent = `${title} @ ${company}`;
+      document.getElementById("followup-email-subject").value = data.subject || "";
+      document.getElementById("followup-email-body").value = data.html_body || "";
+      block.classList.remove("d-none");
+      block.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+      msg.textContent = "Preview failed: " + (data.detail || `HTTP ${res.status}`);
+      msg.className = "ms-2 text-danger";
+    }
+  } catch (e) {
+    msg.textContent = "Request failed: " + e.message;
+    msg.className = "ms-2 text-danger";
+  }
+}
+
+document.getElementById("followup-cancel-btn").addEventListener("click", () => {
+  document.getElementById("followup-preview-block").classList.add("d-none");
+  currentFollowupJobId = null;
+  currentFollowupStage = null;
+});
+
+document.getElementById("followup-confirm-send-btn").addEventListener("click", async () => {
+  if (!currentFollowupJobId) return;
+  const msg = document.getElementById("followup-send-msg");
+  const btn = document.getElementById("followup-confirm-send-btn");
+  btn.disabled = true;
+  btn.textContent = "Sending...";
+  try {
+    const res = await fetch(`${API}/api/notifications/followups/${currentFollowupJobId}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: document.getElementById("followup-email-subject").value,
+        html_body: document.getElementById("followup-email-body").value,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.sent) {
+      msg.textContent = `Sent to ${data.recipient || "candidate"} ✔`;
+      msg.className = "ms-2 text-success";
+      document.getElementById("followup-preview-block").classList.add("d-none");
+      currentFollowupJobId = null;
+      loadFollowupsDue();
+    } else {
+      msg.textContent = "Failed: " + (data.detail || data.reason || `HTTP ${res.status}`);
+      msg.className = "ms-2 text-danger";
+    }
+  } catch (e) {
+    msg.textContent = "Request failed: " + e.message;
+    msg.className = "ms-2 text-danger";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Confirm & Send";
+  }
+});
 
 // ---------- Cover Letters ----------
 async function loadCoverLetters() {
@@ -880,10 +939,34 @@ async function loadLanguagePref() {
     const res = await fetch(`${API}/api/config`);
     const cfg = await res.json();
     document.getElementById("pref-language").value = cfg.language || "English";
+    document.getElementById("pref-posted-within-days").value = cfg.job_posted_within_days ?? 45;
   } catch (e) {
     console.error("loadLanguagePref failed:", e);
   }
 }
+
+document.getElementById("pref-posted-within-save-btn").addEventListener("click", async () => {
+  const msg = document.getElementById("pref-posted-within-msg");
+  const days = document.getElementById("pref-posted-within-days").value;
+  try {
+    const res = await fetch(`${API}/api/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_posted_within_days: parseInt(days, 10) }),
+    });
+    if (res.ok) {
+      msg.textContent = "Saved ✔";
+      msg.className = "ms-2 text-success";
+      loadConfig();
+    } else {
+      msg.textContent = "Failed to save";
+      msg.className = "ms-2 text-danger";
+    }
+  } catch (err) {
+    msg.textContent = "Request failed: " + err.message;
+    msg.className = "ms-2 text-danger";
+  }
+});
 
 document.getElementById("pref-language").addEventListener("change", async (e) => {
   const msg = document.getElementById("pref-language-msg");

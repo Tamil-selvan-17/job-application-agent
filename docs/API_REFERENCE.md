@@ -30,7 +30,7 @@ No authentication - every endpoint is open (single-user personal tool).
 
 ## Job Search Config
 
-The JSON blob (skills, locations, salary range, keywords, job sources, language, `website_link`, etc.) that drives search and matching.
+The JSON blob (skills, locations, salary range, keywords, job sources, language, `website_link`, `job_posted_within_days`, etc.) that drives search and matching.
 
 | Method | Path | Description |
 |---|---|---|
@@ -109,7 +109,8 @@ reply within 10 days (see Notifications section below) - not usually set manuall
 | GET | `/api/notifications/status` | `{"configured": bool, "provider": "mailjet\|brevo\|sendgrid\|custom\|smtp"}` |
 | POST | `/api/notifications/test-email` | Sends a test email to confirm the active provider works |
 | GET | `/api/notifications/followups/due` | Applied jobs with a reminder stage (1st/day 3, 2nd/day 5, 3rd/day 8) due and unsent. Each entry includes `next_reminder_stage` (1/2/3) |
-| POST | `/api/notifications/followups/{job_id}/send` | Sends the next-due reminder stage for one job now (to its `hr_email`/`hr_email_guess` if set, otherwise notifies you instead), and marks that stage sent |
+| POST | `/api/notifications/followups/{job_id}/preview` | Returns `{subject, html_body, hr_target}` without sending, for review/editing first. Query: `?stage=1\|2\|3` (defaults to whichever stage is next due) |
+| POST | `/api/notifications/followups/{job_id}/send` | Sends the next-due reminder stage for one job now (to its `hr_email`/`hr_email_guess` if set, otherwise notifies you instead), and marks that stage sent. Body (optional): `{subject, html_body}` overrides from `/preview`, possibly edited |
 | POST | `/api/notifications/followups/run-all` | Manually triggers the full daily follow-up cycle now (normally runs automatically once a day) - sends all newly-due reminders and auto-marks day-10+ jobs `not_responded` |
 
 ---

@@ -177,7 +177,7 @@ async def fetch_adzuna(config: dict) -> list[dict]:
                     "app_key": env_settings.adzuna_app_key,
                     "results_per_page": 30,
                     "content-type": "application/json",
-                    "max_days_old": 30,
+                    "max_days_old": config.get("job_posted_within_days", 30),
                 }
                 if term:
                     params["what"] = term

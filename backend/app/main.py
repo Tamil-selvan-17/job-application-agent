@@ -69,7 +69,7 @@ async def health():
 # real bug here (confirmed via TestClient: /api/version returned 404
 # instead of the version, which is exactly why the navbar badge showed
 # "unknown" even on a fully up-to-date deploy).
-APP_VERSION = "stage9-excel-import-multistage-followups"
+APP_VERSION = "stage11-posted-within-days-followup-preview"
 
 
 @app.get("/api/version")

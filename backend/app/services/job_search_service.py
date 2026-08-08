@@ -48,6 +48,7 @@ async def search_and_store_jobs() -> dict:
     remote_ok = bool(config.get("remote", False))
     experience_max = config.get("experience_max")
     daily_limit = int(config.get("daily_job_limit", 50))
+    job_posted_within_days = int(config.get("job_posted_within_days", 45))
     target_language = config.get("language") or "English"
 
     relevance_terms = list(dict.fromkeys(skills + keywords_include))  # dedup, keep order
@@ -117,7 +118,7 @@ async def search_and_store_jobs() -> dict:
             skipped_experience += 1
             continue
 
-        if not is_recent_enough(posted_at):
+        if not is_recent_enough(posted_at, max_age_days=job_posted_within_days):
             skipped_stale += 1
             continue
 

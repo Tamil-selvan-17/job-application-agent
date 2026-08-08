@@ -6,7 +6,7 @@
 <title>AI Job Application Agent</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="css/style.css?v=16">
+<link rel="stylesheet" href="css/style.css?v=17">
 </head>
 <body>
 
@@ -111,6 +111,16 @@
           This is the same "language" field in your Job Search Config JSON.
         </div>
         <span id="pref-language-msg" class="ms-2"></span>
+
+        <hr>
+        <label class="form-label">Only Show Jobs Posted Within (days)</label>
+        <input type="number" id="pref-posted-within-days" class="form-control w-auto d-inline-block" min="1" max="365" style="width:100px">
+        <button class="btn btn-sm btn-outline-primary" id="pref-posted-within-save-btn">Save</button>
+        <div class="form-text">
+          Jobs older than this (or with no detectable posting date - kept regardless) are skipped during search.
+          Same as "job_posted_within_days" in your Job Search Config JSON.
+        </div>
+        <span id="pref-posted-within-msg" class="ms-2"></span>
       </div>
     </div>
   </div>
@@ -252,6 +262,16 @@
           send early below.
         </p>
         <div id="followups-list"></div>
+        <div id="followup-preview-block" class="d-none border rounded p-2 mt-2 bg-white">
+          <strong id="followup-preview-title"></strong>
+          <label class="form-label small mb-0 mt-2">Subject</label>
+          <input type="text" id="followup-email-subject" class="form-control form-control-sm mb-2">
+          <label class="form-label small mb-0">Body (HTML - edit freely)</label>
+          <textarea id="followup-email-body" class="form-control form-control-sm mb-2" rows="8"></textarea>
+          <button class="btn btn-sm btn-success" id="followup-confirm-send-btn">Confirm & Send</button>
+          <button class="btn btn-sm btn-outline-secondary" id="followup-cancel-btn">Cancel</button>
+          <span id="followup-send-msg" class="ms-2"></span>
+        </div>
       </div>
     </div>
 
@@ -390,6 +410,6 @@
   </main>
 </div>
 
-<script src="js/app.js?v=16"></script>
+<script src="js/app.js?v=17"></script>
 </body>
 </html>

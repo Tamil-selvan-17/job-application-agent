@@ -45,5 +45,11 @@ class JobSearchConfig(BaseModel):
         default_factory=lambda: ["LinkedIn", "Indeed", "Naukri", "Wellfound"]
     )
 
+    # Only keep jobs posted within this many days (server-side sources
+    # like Adzuna also use this for their own recency search param).
+    # Jobs with no parseable posting date are kept regardless (benefit
+    # of the doubt) rather than penalized for missing data.
+    job_posted_within_days: int = 45
+
     class Config:
         extra = "allow"  # forward-compatible: unknown keys won't be rejected

@@ -324,6 +324,13 @@ async def mark_followup_sent(job_id: str, stage: int) -> dict:
     return await get_job(job_id)
 
 
+async def preview_followup_email(job_id: str, stage: int) -> dict:
+    """Builds the follow-up subject+body without sending, so it can be reviewed/edited first."""
+    job = await get_job(job_id)
+    config = await config_service.get_config()
+    return email_service.build_followup_email_preview(job, config, stage)
+
+
 async def process_followup_reminders() -> dict:
     """
     Runs the full 3/5/8/10-day cycle for every applied job: sends
