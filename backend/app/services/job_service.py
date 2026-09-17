@@ -484,6 +484,16 @@ def _to_detail(j: dict) -> dict:
             "reminder_1_sent_at": j.get("reminder_1_sent_at"),
             "reminder_2_sent_at": j.get("reminder_2_sent_at"),
             "reminder_3_sent_at": j.get("reminder_3_sent_at"),
+            # New workflow fields
+            "workflow_state": j.get("workflow_state", "JOB_CREATED"),
+            "resume_status": j.get("resume_status", "NOT_GENERATED"),
+            "email_status": j.get("email_status", "NOT_SENT"),
+            "application_status": j.get("application_status", "NOT_APPLIED"),
+            "generated_resume_id": j.get("generated_resume_id"),
+            "jd_analysis": j.get("jd_analysis"),
+            "contacts": j.get("contacts", []),
+            "ats_score": j.get("ats_score", 0),
+            "company_url": j.get("company_url", ""),
         }
     )
     return summary

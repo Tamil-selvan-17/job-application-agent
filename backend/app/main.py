@@ -14,6 +14,12 @@ from app.routers import (
     jobsearch_router,
     notifications_router,
     cover_letter_router,
+    candidate_router,
+    resume_gen_router,
+    jd_analysis_router,
+    contacts_router,
+    browser_router,
+    application_router,
 )
 from app.services.scheduler_service import start_scheduler, stop_scheduler
 
@@ -51,6 +57,14 @@ app.include_router(cover_letter_router.router)
 app.include_router(job_router.router)
 app.include_router(jobsearch_router.router)
 app.include_router(notifications_router.router)
+# ---- New routers ----
+app.include_router(candidate_router.router)
+app.include_router(resume_gen_router.router)
+app.include_router(jd_analysis_router.router)
+app.include_router(contacts_router.router)
+app.include_router(browser_router.router)
+app.include_router(application_router.router)
+app.include_router(application_router.job_router)
 
 
 @app.get("/api/health")

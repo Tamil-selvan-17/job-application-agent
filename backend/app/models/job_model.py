@@ -4,6 +4,24 @@ from pydantic import BaseModel, Field
 
 JobStatus = Literal["new", "saved", "applied", "rejected", "interview", "offer", "not_responded"]
 
+WorkflowState = Literal[
+    "JOB_CREATED",
+    "JD_ANALYZED",
+    "RESUME_CUSTOMIZED",
+    "DOCX_GENERATED",
+    "PDF_GENERATED",
+    "CONTACTS_FOUND",
+    "EMAIL_READY",
+    "EMAIL_SENT",
+    "APPLICATION_STARTED",
+    "APPLIED",
+    "FAILED",
+]
+
+ResumeStatus = Literal["NOT_GENERATED", "GENERATING", "READY", "FAILED"]
+EmailStatus = Literal["NOT_SENT", "SENT", "FAILED"]
+ApplicationStatus = Literal["NOT_APPLIED", "APPLYING", "CAPTCHA_REQUIRED", "AWAITING_CONFIRMATION", "APPLIED", "FAILED"]
+
 
 class JobCreate(BaseModel):
     title: str
@@ -58,6 +76,15 @@ class JobSummary(BaseModel):
     match_percent: int | None = None
 
 
+class ContactRecord(BaseModel):
+    email: str
+    source: str = ""
+    confidence: int = 0          # 0-100
+    contact_type: str = "OTHER"  # HR | RECRUITER | CAREERS | OTHER
+    verified: bool = False
+    name: str = ""
+
+
 class JobDetail(JobSummary):
     url: str = ""
     salary_text: str = ""
@@ -74,6 +101,16 @@ class JobDetail(JobSummary):
     reminder_1_sent_at: datetime | None = None
     reminder_2_sent_at: datetime | None = None
     reminder_3_sent_at: datetime | None = None
+    # --- New fields for full agent workflow ---
+    workflow_state: WorkflowState = "JOB_CREATED"
+    resume_status: ResumeStatus = "NOT_GENERATED"
+    email_status: EmailStatus = "NOT_SENT"
+    application_status: ApplicationStatus = "NOT_APPLIED"
+    generated_resume_id: str | None = None   # ID in generated_resumes collection
+    jd_analysis: dict | None = None          # Structured JD analysis (hooks, ATS keywords, etc.)
+    contacts: list[ContactRecord] = Field(default_factory=list)  # Discovered HR contacts
+    ats_score: int = 0                       # ATS score of generated resume vs this JD
+    company_url: str = ""                    # Populated by JD analyzer if present in JD
 
 
 class ExcelImportResult(BaseModel):

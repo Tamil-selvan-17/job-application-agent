@@ -15,7 +15,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config.env import env_settings
-from app.services import job_search_service, job_service, email_service
+from app.services import job_search_service, job_service, email_service, application_tracker_service
 
 logger = logging.getLogger("scheduler")
 scheduler = AsyncIOScheduler()
@@ -41,6 +41,20 @@ async def run_daily_followup_check():
         logger.exception("Daily follow-up processing failed")
 
 
+async def run_daily_resume_cleanup():
+    """
+    Deletes generated DOCX/PDF documents from the generated_resumes collection
+    where scheduled_delete_at is in the past (set 1 day after application).
+    This keeps Mongo clean and respects the user's data minimisation preference.
+    """
+    try:
+        deleted = await application_tracker_service.cleanup_expired_resumes()
+        if deleted:
+            logger.info("Resume cleanup: deleted %d expired generated resume(s)", deleted)
+    except Exception:
+        logger.exception("Daily resume cleanup failed")
+
+
 def start_scheduler():
     if not env_settings.enable_scheduler:
         logger.info("Scheduler disabled via ENABLE_SCHEDULER=false")
@@ -57,6 +71,13 @@ def start_scheduler():
         "cron",
         hour=env_settings.daily_reminder_hour_utc,
         id="daily_followup_check",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_daily_resume_cleanup,
+        "cron",
+        hour=(env_settings.daily_reminder_hour_utc + 1) % 24,
+        id="daily_resume_cleanup",
         replace_existing=True,
     )
     scheduler.start()

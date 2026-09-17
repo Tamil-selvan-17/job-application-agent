@@ -1,1002 +1,1623 @@
-const API = ""; // same origin
+/* ==========================================================
+   AI Job Application Agent — app.js
+   Comprehensive vanilla JS for all frontend features.
+   All API calls use fetch(). Modular, commented, no Bootstrap.
+   ========================================================== */
 
-// Safety net: if any part of this script throws or a promise rejects unhandled,
-// log it clearly instead of the page silently going dead (e.g. buttons doing
-// nothing, status text stuck on "checking..." forever).
-window.addEventListener("error", (e) => {
-  console.error("Unhandled JS error:", e.message, e.filename, e.lineno);
-});
-window.addEventListener("unhandledrejection", (e) => {
-  console.error("Unhandled promise rejection:", e.reason);
-});
+'use strict';
 
-// ---------- Tabs ----------
-document.querySelectorAll("[data-tab]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll("[data-tab]").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    document.querySelectorAll(".tab-pane").forEach((p) => p.classList.add("d-none"));
-    document.getElementById(`tab-${btn.dataset.tab}`).classList.remove("d-none");
-  });
-});
+/* ─────────────────────────────────────────────────────────
+   STATE
+   ───────────────────────────────────────────────────────── */
+const State = {
+  currentTab:      'dashboard',
+  currentJobId:    null,
+  currentJob:      null,
+  currentResumeId: null,
+  allJobs:         [],
+  allResumes:      [],
+  automationPoll:  null,   // setInterval handle
+  followupJobId:   null,   // which job we're sending a follow-up for
+  profileData:     {},     // cached candidate profile
+  tagsData: {
+    technical: [],
+    soft:      [],
+    languages: [],
+  },
+};
 
-// ---------- Settings (read-only display; actual config lives in backend/.env) ----------
-async function loadSettings() {
-  const res = await fetch(`${API}/api/settings`);
-  const s = await res.json();
-  document.getElementById("disp_ai_provider").textContent = s.ai_provider || "-";
-  document.getElementById("disp_ollama_base_url").textContent = s.ollama_base_url || "-";
-  document.getElementById("disp_ollama_model").textContent = s.ollama_model || "-";
-  document.getElementById("disp_gemini_key").textContent = s.gemini_api_key_set ? "set ✔" : "not set";
+/* ─────────────────────────────────────────────────────────
+   API HELPERS
+   ───────────────────────────────────────────────────────── */
+const API = {
+  base: '',   // same origin
 
-  const select = document.getElementById("gemini-model-select");
-  const choices = s.gemini_model_choices || [s.gemini_model];
-  select.innerHTML = choices
-    .map((m) => `<option value="${m}"${m === s.gemini_model ? " selected" : ""}>${m}</option>`)
-    .join("");
-  // If the currently active model (e.g. set directly via .env) isn't in the preset list, add it so it's not lost.
-  if (s.gemini_model && !choices.includes(s.gemini_model)) {
-    select.insertAdjacentHTML("afterbegin", `<option value="${s.gemini_model}" selected>${s.gemini_model} (current)</option>`);
-  }
-  document.getElementById("gemini-model-msg").textContent = s.gemini_model_is_override ? "(overridden from UI)" : "(from .env)";
+  async get(path) {
+    const r = await fetch(this.base + path);
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json();
+  },
 
-  checkAiHealth();
-}
-
-document.getElementById("gemini-model-select").addEventListener("change", async (e) => {
-  const msg = document.getElementById("gemini-model-msg");
-  msg.textContent = "Switching...";
-  try {
-    const res = await fetch(`${API}/api/settings/gemini-model`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: e.target.value }),
+  async post(path, body) {
+    const r = await fetch(this.base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
-    if (res.ok) {
-      msg.textContent = "Switched ✔ - testing connection...";
-      checkAiHealth();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      msg.textContent = "Failed: " + (data.detail || `HTTP ${res.status}`);
-    }
-  } catch (err) {
-    msg.textContent = "Request failed: " + err.message;
-  }
-});
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json();
+  },
 
-document.getElementById("test-ai-btn").addEventListener("click", checkAiHealth);
+  async put(path, body) {
+    const r = await fetch(this.base + path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json();
+  },
 
-async function checkAiHealth() {
-  const badge = document.getElementById("ai-status-badge");
-  const dot = document.getElementById("ai-status-dot");
-  badge.textContent = "checking AI...";
-  dot.className = "status-dot pending";
-  try {
-    const res = await fetch(`${API}/api/settings/ai/health`);
-    const data = await res.json();
-    if (data.ok) {
-      badge.textContent = `${data.provider} connected`;
-      dot.className = "status-dot ok";
-    } else {
-      badge.textContent = `${data.provider} ${data.error || "unreachable"}`;
-      dot.className = "status-dot bad";
-    }
-  } catch (e) {
-    badge.textContent = "AI check failed";
-    dot.className = "status-dot bad";
-  }
+  async del(path) {
+    const r = await fetch(this.base + path, { method: 'DELETE' });
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json().catch(() => ({}));
+  },
+
+  async postForm(path, formData) {
+    const r = await fetch(this.base + path, { method: 'POST', body: formData });
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json();
+  },
+
+  async postRaw(path, body) {
+    const r = await fetch(this.base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const t = await r.text(); throw new Error(t || r.statusText); }
+    return r.json();
+  },
+};
+
+/* ─────────────────────────────────────────────────────────
+   TOAST NOTIFICATIONS
+   ───────────────────────────────────────────────────────── */
+const Toast = {
+  show(msg, type = 'info', duration = 4000) {
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    const icon = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' }[type] || 'ℹ';
+    el.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+    container.appendChild(el);
+    setTimeout(() => {
+      el.classList.add('hiding');
+      setTimeout(() => el.remove(), 300);
+    }, duration);
+  },
+  success: (m, d) => Toast.show(m, 'success', d),
+  error:   (m, d) => Toast.show(m, 'error',   d),
+  warning: (m, d) => Toast.show(m, 'warning', d),
+  info:    (m, d) => Toast.show(m, 'info',    d),
+};
+
+/* ─────────────────────────────────────────────────────────
+   HELPER UTILITIES
+   ───────────────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+const $$ = (sel, ctx = document) => ctx.querySelector(sel);
+
+function setText(id, val)  { const el = $(id); if (el) el.textContent = val ?? '—'; }
+function setHtml(id, val)  { const el = $(id); if (el) el.innerHTML  = val ?? ''; }
+function show(id)          { const el = $(id); if (el) el.classList.remove('d-none'); }
+function hide(id)          { const el = $(id); if (el) el.classList.add('d-none'); }
+function toggle(id, cond)  { cond ? show(id) : hide(id); }
+
+function setMsg(id, msg, type = '') {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = { success: 'var(--green)', error: 'var(--red)', warning: 'var(--yellow)', '': 'var(--text-muted)' }[type] || 'var(--text-muted)';
 }
 
-// ---------- Config ----------
-async function loadConfig() {
-  const res = await fetch(`${API}/api/config`);
-  const cfg = await res.json();
-  document.getElementById("config-json").value = JSON.stringify(cfg, null, 2);
+function fmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return d; }
 }
 
-document.getElementById("reload-config-btn").addEventListener("click", loadConfig);
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-document.getElementById("save-config-btn").addEventListener("click", async () => {
-  const msg = document.getElementById("config-msg");
-  let parsed;
-  try {
-    parsed = JSON.parse(document.getElementById("config-json").value);
-  } catch (e) {
-    msg.textContent = "Invalid JSON: " + e.message;
-    msg.className = "ms-2 text-danger";
-    return;
+/* ─────────────────────────────────────────────────────────
+   TAB ROUTING
+   ───────────────────────────────────────────────────────── */
+const TAB_LOADERS = {
+  dashboard: () => App.loadDashboard(),
+  profile:   () => App.loadProfile(),
+  jobs:      () => App.loadJobs(),
+  resumes:   () => App.loadResumes(),
+  settings:  () => App.loadSettings(),
+};
+
+function switchTab(tabId) {
+  // Hide all panes
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  // Deactivate all nav buttons
+  document.querySelectorAll('.sidebar-nav button').forEach(b => b.classList.remove('active'));
+  // Activate target
+  const pane = $(`tab-${tabId}`);
+  if (pane) pane.classList.add('active');
+  const btn = document.querySelector(`.sidebar-nav button[data-tab="${tabId}"]`);
+  if (btn) btn.classList.add('active');
+
+  State.currentTab = tabId;
+  if (TAB_LOADERS[tabId]) TAB_LOADERS[tabId]();
+}
+
+/* ─────────────────────────────────────────────────────────
+   STATUS BADGES & JOB CARD HELPERS
+   ───────────────────────────────────────────────────────── */
+const STATUS_MAP = {
+  new:           { cls: 'badge-new',      dot: 'new',      label: 'NEW' },
+  saved:         { cls: 'badge-new',      dot: 'new',      label: 'SAVED' },
+  analyzed:      { cls: 'badge-analyzed', dot: 'analyzed', label: 'ANALYZED' },
+  resume_ready:  { cls: 'badge-ready',    dot: 'ready',    label: 'RESUME READY' },
+  email_sent:    { cls: 'badge-sent',     dot: 'sent',     label: 'EMAIL SENT' },
+  applied:       { cls: 'badge-applied',  dot: 'applied',  label: 'APPLIED' },
+  rejected:      { cls: 'badge-failed',   dot: 'failed',   label: 'REJECTED' },
+  interview:     { cls: 'badge-ready',    dot: 'ready',    label: 'INTERVIEW' },
+  offer:         { cls: 'badge-applied',  dot: 'applied',  label: 'OFFER' },
+  not_responded: { cls: 'badge-failed',   dot: 'failed',   label: 'NO RESPONSE' },
+};
+
+function statusBadgeHTML(status) {
+  const s = STATUS_MAP[status] || STATUS_MAP.new;
+  return `<span class="badge ${s.cls}"><span class="badge-dot ${s.dot}"></span>${s.label}</span>`;
+}
+
+function matchBadgeHTML(score) {
+  if (!score && score !== 0) return '';
+  const pct = Math.round(score);
+  return `<span class="badge badge-match">${pct}% match</span>`;
+}
+
+function buildJobCard(job) {
+  const status   = job.status || 'new';
+  const match    = job.match_score;
+  const hasEmail = job.hr_email;
+  const contacts = (job.contacts_count || 0);
+  const resumeReady = job.resume_generated;
+  const atsScore = job.ats_score;
+
+  return `
+  <div class="job-card glow" id="job-card-${job.id}" onclick="App.openJobDetail(${job.id})">
+    <div class="job-card-top">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${statusBadgeHTML(status)}
+      </div>
+      ${match != null ? matchBadgeHTML(match) : ''}
+    </div>
+    <div class="job-card-title">${esc(job.title || job.role_name || '(No Title)')}</div>
+    <div class="job-card-meta">
+      <span>${esc(job.company || '—')} · ${esc(job.location || '—')}</span>
+      ${job.experience_required ? `<span>${esc(job.experience_required)} · ${esc(job.job_type || 'Full-time')}</span>` : ''}
+    </div>
+    <div class="job-card-info">
+      <div class="job-card-info-row">
+        <span class="badge-dot ${resumeReady ? 'ready' : 'new'}" style="width:7px;height:7px;border-radius:50%;background:${resumeReady ? 'var(--green)' : 'var(--text-muted)'}"></span>
+        <span>Resume: ${resumeReady ? `Ready${atsScore ? ` (ATS: ${Math.round(atsScore)}%)` : ''}` : 'Not generated'}</span>
+      </div>
+      <div class="job-card-info-row">
+        <span class="badge-dot ${hasEmail || contacts ? 'ready' : 'new'}" style="width:7px;height:7px;border-radius:50%;background:${hasEmail || contacts ? 'var(--green)' : 'var(--text-muted)'}"></span>
+        <span>HR Email: ${contacts ? `${contacts} contact${contacts > 1 ? 's' : ''} found` : (hasEmail ? 'On file' : 'Not found')}</span>
+      </div>
+    </div>
+    <div class="job-card-actions" onclick="event.stopPropagation()">
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.analyzeJD()">Analyze JD</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.findContacts()">Find HR</button>
+      <button class="btn btn-primary btn-xs" onclick="App.openJobDetail(${job.id});App.generateResume()">Gen Resume</button>
+      ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.previewResumePDF()">Preview PDF</button>` : ''}
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.focusEmailHR()">Email HR</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.startWebsiteApply()">Apply Web</button>
+    </div>
+  </div>`;
+}
+
+/* ─────────────────────────────────────────────────────────
+   SKILL TAGS INPUT
+   ───────────────────────────────────────────────────────── */
+function initTagsInput(wrapperId, inputId, dataKey) {
+  const wrapper = $(wrapperId);
+  const input   = $(inputId);
+  if (!wrapper || !input) return;
+
+  // Render tags
+  function renderTags() {
+    // Remove all tag-items
+    wrapper.querySelectorAll('.tag-item').forEach(t => t.remove());
+    State.tagsData[dataKey].forEach((tag, i) => {
+      const el = document.createElement('span');
+      el.className = 'tag-item';
+      el.innerHTML = `${esc(tag)}<button type="button" onclick="App.removeTag('${dataKey}',${i})" title="Remove">×</button>`;
+      wrapper.insertBefore(el, input);
+    });
   }
-  const res = await fetch(`${API}/api/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(parsed),
+
+  function addTag(val) {
+    const v = val.trim();
+    if (!v || State.tagsData[dataKey].includes(v)) return;
+    State.tagsData[dataKey].push(v);
+    renderTags();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(input.value);
+      input.value = '';
+    } else if (e.key === 'Backspace' && !input.value) {
+      State.tagsData[dataKey].pop();
+      renderTags();
+    }
   });
-  if (res.ok) {
-    msg.textContent = "Config saved ✔ (applies immediately)";
-    msg.className = "ms-2 text-success";
-    loadConfig();
-  } else {
-    const err = await res.json();
-    msg.textContent = "Save failed: " + JSON.stringify(err.detail || err);
-    msg.className = "ms-2 text-danger";
-  }
-});
 
-document.getElementById("config-file-input").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(`${API}/api/config/upload`, { method: "POST", body: formData });
-  const msg = document.getElementById("config-msg");
-  if (res.ok) {
-    msg.textContent = "Uploaded & saved ✔";
-    msg.className = "ms-2 text-success";
-    loadConfig();
-  } else {
-    const err = await res.json();
-    msg.textContent = "Upload failed: " + JSON.stringify(err.detail || err);
-    msg.className = "ms-2 text-danger";
-  }
-});
+  wrapper.addEventListener('click', () => input.focus());
+  renderTags();
+}
 
-// ---------- Resumes ----------
-let currentResumeId = null;
+/* ─────────────────────────────────────────────────────────
+   ACCORDION HELPERS (Experience, Education, Projects, Certs)
+   ───────────────────────────────────────────────────────── */
+function buildAccordion(containerId, items, fieldsDef, removeCallback) {
+  const container = $(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  items.forEach((item, idx) => {
+    const div = document.createElement('div');
+    div.className = 'accordion-item open';
+    div.id = `acc-${containerId}-${idx}`;
+    const title = item.title || item.role || item.institution || item.name || `Entry ${idx + 1}`;
+    div.innerHTML = `
+      <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="accordion-title">${esc(title)}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();${removeCallback}(${idx})" type="button">Remove</button>
+          <span class="accordion-toggle">▾</span>
+        </div>
+      </div>
+      <div class="accordion-body">
+        ${fieldsDef.map(f => `
+          <div class="form-group">
+            <label class="form-label">${esc(f.label)}</label>
+            ${f.type === 'textarea'
+              ? `<textarea class="form-control" data-acc="${containerId}" data-idx="${idx}" data-field="${f.key}" rows="3">${esc(item[f.key] || '')}</textarea>`
+              : `<input type="${f.type || 'text'}" class="form-control" data-acc="${containerId}" data-idx="${idx}" data-field="${f.key}" value="${esc(item[f.key] || '')}">`
+            }
+          </div>`).join('')}
+      </div>`;
+    container.appendChild(div);
+  });
 
-async function loadResumes() {
-  const res = await fetch(`${API}/api/resumes`);
-  const resumes = await res.json();
-  const list = document.getElementById("resumes-list");
-  list.innerHTML = "";
-  if (resumes.length === 0) {
-    list.innerHTML = '<div class="text-muted">No resumes uploaded yet.</div>';
-    return;
+  // Bind change events
+  container.querySelectorAll('[data-acc]').forEach(el => {
+    el.addEventListener('input', () => {
+      const i   = parseInt(el.dataset.idx);
+      const key = el.dataset.field;
+      items[i][key] = el.value;
+    });
+  });
+}
+
+/* ─────────────────────────────────────────────────────────
+   PDF MODAL
+   ───────────────────────────────────────────────────────── */
+function openPDFModal(src, title) {
+  $('pdf-modal-iframe').src = src;
+  setText('pdf-modal-title', title || 'Resume Preview');
+  $('pdf-modal').classList.remove('d-none');
+}
+
+function closePDFModal() {
+  $('pdf-modal').classList.add('d-none');
+  $('pdf-modal-iframe').src = 'about:blank';
+}
+
+/* ─────────────────────────────────────────────────────────
+   JOB DETAIL PANEL
+   ───────────────────────────────────────────────────────── */
+function openPanel() {
+  $('job-detail-panel').classList.add('open');
+  $('panel-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closePanel() {
+  $('job-detail-panel').classList.remove('open');
+  $('panel-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  stopAutomationPoll();
+  State.currentJobId = null;
+  State.currentJob   = null;
+}
+
+/* ─────────────────────────────────────────────────────────
+   STEPPER UPDATE
+   ───────────────────────────────────────────────────────── */
+function updateStepper(job) {
+  const hasAnalysis  = !!(job.analysis || job.match_score != null);
+  const hasContacts  = !!(job.hr_email || job.contacts_count);
+  const hasResume    = !!job.resume_generated;
+  const applied      = ['applied', 'email_sent'].includes(job.status);
+
+  function setStep(n, done, active) {
+    const btn = $(`step-btn-${n}`);
+    const item = $(`step-item-${n}`);
+    if (!btn) return;
+    btn.classList.toggle('completed', done);
+    btn.classList.toggle('active', active && !done);
+    if (item) item.classList.toggle('step-done', done);
   }
-  resumes.forEach((r) => {
-    const item = document.createElement("div");
-    item.className = "list-group-item d-flex justify-content-between align-items-center";
-    item.innerHTML = `
-      <span class="flex-grow-1" style="cursor:pointer" data-action="open">
-        ${r.is_default ? "⭐ " : ""}<strong>${r.filename}</strong>
-        <span class="text-muted small ms-2">v${r.current_version} · ${new Date(r.uploaded_at).toLocaleString()}</span>
-      </span>
-      <span class="badge bg-secondary me-2">${r.file_type}</span>
-      <button class="btn btn-sm btn-outline-danger" data-action="remove">Remove</button>
-    `;
-    item.querySelector('[data-action="open"]').addEventListener("click", () => openResumeDetail(r.id));
-    item.querySelector('[data-action="remove"]').addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm(`Delete "${r.filename}"? This can't be undone.`)) return;
-      await fetch(`${API}/api/resumes/${r.id}`, { method: "DELETE" });
-      loadResumes();
-      if (currentResumeId === r.id) {
-        document.getElementById("resume-detail-card").classList.add("d-none");
-        currentResumeId = null;
+
+  setStep(1, hasAnalysis,                    !hasAnalysis);
+  setStep(2, hasContacts,                    hasAnalysis && !hasContacts);
+  setStep(3, hasResume,                      hasContacts && !hasResume);
+  setStep(4, hasResume,                      hasResume);
+  setStep(5, applied,                        hasResume && !applied);
+}
+
+/* ─────────────────────────────────────────────────────────
+   AUTOMATION POLLING
+   ───────────────────────────────────────────────────────── */
+function startAutomationPoll(jobId) {
+  stopAutomationPoll();
+  State.automationPoll = setInterval(() => App.pollAutomationStatus(jobId), 2000);
+}
+
+function stopAutomationPoll() {
+  if (State.automationPoll) { clearInterval(State.automationPoll); State.automationPoll = null; }
+}
+
+/* ─────────────────────────────────────────────────────────
+   MAIN APP OBJECT
+   ───────────────────────────────────────────────────────── */
+const App = {
+
+  /* ── INIT ──────────────────────────────────────────────── */
+  init() {
+    // Sidebar navigation
+    document.querySelectorAll('.sidebar-nav button[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    // Panel close
+    $('jdp-close-btn').addEventListener('click', closePanel);
+    $('panel-overlay').addEventListener('click', closePanel);
+
+    // PDF modal close
+    $('pdf-modal-close').addEventListener('click', closePDFModal);
+    $('pdf-modal').addEventListener('click', (e) => { if (e.target === $('pdf-modal')) closePDFModal(); });
+
+    // Profile section tabs
+    document.querySelectorAll('#profile-section-tabs .section-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('#profile-section-tabs .section-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        $(`section-${tab.dataset.section}`)?.classList.add('active');
+      });
+    });
+
+    // Gemini model auto-save on change
+    $('gemini-model-select').addEventListener('change', () => App.saveGeminiModel());
+
+    // Language preference auto-save
+    $('pref-language').addEventListener('change', () => App.saveLanguagePref());
+
+    // Job search filter
+    $('job-search-filter')?.addEventListener('input', () => App.renderJobs());
+    $('min-match-filter')?.addEventListener('input',  () => App.renderJobs());
+
+    // JD status select
+    $('jdp-status-select').addEventListener('change', (e) => {
+      if (State.currentJobId) App.updateJobStatus(State.currentJobId, e.target.value);
+    });
+
+    // Tags inputs
+    initTagsInput('tags-technical', 'tags-technical-input', 'technical');
+    initTagsInput('tags-soft',      'tags-soft-input',      'soft');
+    initTagsInput('tags-languages', 'tags-languages-input', 'languages');
+
+    // Upload zone drag-over
+    const zone = $('resume-upload-zone');
+    if (zone) {
+      zone.addEventListener('dragover',  (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+      zone.addEventListener('dragleave', ()  => zone.classList.remove('drag-over'));
+      zone.addEventListener('drop',      (e) => { e.preventDefault(); zone.classList.remove('drag-over'); App.uploadResume(e.dataTransfer.files[0]); });
+    }
+
+    // Boot: load sidebar info + switch to dashboard
+    App.loadVersion();
+    App.checkAI();
+    switchTab('dashboard');
+  },
+
+  switchTab,
+
+  /* ── VERSION & AI STATUS ───────────────────────────────── */
+  async loadVersion() {
+    try {
+      const d = await API.get('/api/version');
+      setText('version-badge', `v${d.version || '?'}`);
+      $('version-dot').classList.add('online');
+    } catch {
+      setText('version-badge', 'offline');
+      $('version-dot').classList.add('offline');
+    }
+  },
+
+  async checkAI() {
+    try {
+      const d = await API.get('/api/ai/health');
+      const ok = d.status === 'ok' || d.healthy === true;
+      setText('ai-status-badge', d.provider ? `${d.provider}: ${ok ? 'online' : 'error'}` : (ok ? 'AI online' : 'AI error'));
+      $('ai-status-dot').className = 'status-dot ' + (ok ? 'online' : 'offline');
+    } catch {
+      setText('ai-status-badge', 'AI offline');
+      $('ai-status-dot').className = 'status-dot offline';
+    }
+  },
+
+  /* ═══════════════════════════════════════════════════════
+     DASHBOARD
+     ═════════════════════════════════════════════════════ */
+  async loadDashboard() {
+    try {
+      const stats = await API.get('/api/applications/stats');
+      setText('stat-applied',     stats.applied      ?? stats.total_applied    ?? 0);
+      setText('stat-email-sent',  stats.email_sent   ?? stats.emails_sent      ?? 0);
+      setText('stat-resume-ready',stats.resume_ready ?? stats.resumes_generated?? 0);
+      setText('stat-failed',      stats.failed       ?? stats.rejected         ?? 0);
+      setText('stat-pending',     stats.pending      ?? stats.pending_applications ?? 0);
+    } catch(e) {
+      console.warn('Stats error:', e.message);
+    }
+
+    try {
+      const apps = await API.get('/api/applications');
+      const list = Array.isArray(apps) ? apps : (apps.applications || []);
+      const tbody = $('dashboard-apps-tbody');
+      const table = $('dashboard-apps-table');
+      const empty = $('dashboard-apps-empty');
+
+      if (!list.length) {
+        hide('dashboard-apps-table');
+        show('dashboard-apps-empty');
+        return;
       }
-    });
-    list.appendChild(item);
-  });
-}
-document.getElementById("reload-resumes-btn").addEventListener("click", loadResumes);
+      show('dashboard-apps-table');
+      hide('dashboard-apps-empty');
+      table.style.display = '';
 
-document.getElementById("resume-upload-btn").addEventListener("click", async () => {
-  const fileInput = document.getElementById("resume-file-input");
-  const msg = document.getElementById("resume-upload-msg");
-  if (!fileInput.files[0]) {
-    msg.textContent = "Choose a file first";
-    msg.className = "text-danger";
-    return;
-  }
-  const isDefault = document.getElementById("resume-set-default").checked;
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  const res = await fetch(`${API}/api/resumes/upload?is_default=${isDefault}`, {
-    method: "POST",
-    body: formData,
-  });
-  if (res.ok) {
-    msg.textContent = "Uploaded ✔";
-    msg.className = "text-success";
-    fileInput.value = "";
-    loadResumes();
-  } else {
-    const err = await res.json();
-    msg.textContent = "Upload failed: " + JSON.stringify(err.detail || err);
-    msg.className = "text-danger";
-  }
-});
-
-async function openResumeDetail(id) {
-  currentResumeId = id;
-  const res = await fetch(`${API}/api/resumes/${id}`);
-  const r = await res.json();
-  document.getElementById("resume-detail-card").classList.remove("d-none");
-  document.getElementById("resume-detail-title").textContent = `${r.filename} (v${r.current_version})`;
-  document.getElementById("resume-detail-text").textContent = r.extracted_text || "(no text extracted)";
-  document.getElementById("resume-analysis-block").classList.add("d-none");
-  loadVersions(id);
-}
-
-document.getElementById("resume-detail-close").addEventListener("click", () => {
-  document.getElementById("resume-detail-card").classList.add("d-none");
-  currentResumeId = null;
-});
-
-document.getElementById("resume-set-default-btn").addEventListener("click", async () => {
-  if (!currentResumeId) return;
-  await fetch(`${API}/api/resumes/${currentResumeId}/default`, { method: "PUT" });
-  loadResumes();
-  openResumeDetail(currentResumeId);
-  loadConfig(); // config.default_resume is synced server-side - refresh to show it
-});
-
-document.getElementById("resume-delete-btn").addEventListener("click", async () => {
-  if (!currentResumeId) return;
-  if (!confirm("Delete this resume and all its versions?")) return;
-  await fetch(`${API}/api/resumes/${currentResumeId}`, { method: "DELETE" });
-  document.getElementById("resume-detail-card").classList.add("d-none");
-  currentResumeId = null;
-  loadResumes();
-});
-
-document.getElementById("resume-version-input").addEventListener("change", async (e) => {
-  if (!currentResumeId || !e.target.files[0]) return;
-  const formData = new FormData();
-  formData.append("file", e.target.files[0]);
-  await fetch(`${API}/api/resumes/${currentResumeId}/versions`, { method: "POST", body: formData });
-  loadResumes();
-  openResumeDetail(currentResumeId);
-});
-
-document.getElementById("resume-analyze-btn").addEventListener("click", async () => {
-  if (!currentResumeId) return;
-  const btn = document.getElementById("resume-analyze-btn");
-  btn.disabled = true;
-  btn.textContent = "Analyzing...";
-  try {
-    const res = await fetch(`${API}/api/resumes/${currentResumeId}/analyze`, { method: "POST" });
-    const data = await res.json();
-    if (res.ok) {
-      document.getElementById("resume-analysis-block").classList.remove("d-none");
-      document.getElementById("resume-analysis-text").textContent = `[${data.provider}]\n\n${data.result_text}`;
-    } else {
-      alert("Analysis failed: " + JSON.stringify(data.detail || data));
+      tbody.innerHTML = list.slice(0, 20).map(a => `
+        <tr>
+          <td>${esc(a.company || a.company_name || '—')}</td>
+          <td>${esc(a.role || a.title || a.job_title || '—')}</td>
+          <td>${esc(a.method || a.application_method || '—')}</td>
+          <td>${statusBadgeHTML(a.status || 'new')}</td>
+          <td>${fmtDate(a.applied_at || a.created_at)}</td>
+        </tr>`).join('');
+    } catch(e) {
+      console.warn('Applications error:', e.message);
     }
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Analyze with AI";
-  }
-});
+  },
 
-async function loadVersions(resumeId) {
-  const res = await fetch(`${API}/api/resumes/${resumeId}/versions`);
-  const versions = await res.json();
-  const list = document.getElementById("resume-versions-list");
-  list.innerHTML = "";
-  versions.forEach((v) => {
-    const li = document.createElement("li");
-    li.className = "list-group-item small";
-    li.textContent = `v${v.version} - ${v.filename} - ${new Date(v.created_at).toLocaleString()}`;
-    list.appendChild(li);
-  });
-}
-
-// ---------- Jobs ----------
-let currentJobId = null;
-let currentJobUrl = "";
-
-async function loadJobs() {
-  const minMatch = document.getElementById("min-match-filter").value;
-  const url = minMatch ? `${API}/api/jobs?min_match=${encodeURIComponent(minMatch)}` : `${API}/api/jobs`;
-  const res = await fetch(url);
-  const jobs = await res.json();
-  const list = document.getElementById("jobs-list");
-  list.innerHTML = "";
-  if (jobs.length === 0) {
-    list.innerHTML = minMatch
-      ? '<div class="text-muted">No jobs with that match % yet - try "Analyze All Unanalyzed" first.</div>'
-      : '<div class="text-muted">No jobs added yet.</div>';
-    return;
-  }
-  jobs.forEach((j) => {
-    const item = document.createElement("div");
-    item.className = "list-group-item d-flex justify-content-between align-items-center";
-    const matchBadge = j.match_percent !== null && j.match_percent !== undefined
-      ? `<span class="badge bg-primary ms-2">${j.match_percent}% match</span>`
-      : "";
-    item.innerHTML = `
-      <span class="flex-grow-1" style="cursor:pointer" data-action="open">
-        <strong>${j.title}</strong> @ ${j.company}
-        <span class="text-muted small ms-2">${j.location || ""}</span>
-        ${matchBadge}
-      </span>
-      <span class="status-pill status-${j.status} me-2">${j.status.replace('_', ' ')}</span>
-      <button class="btn btn-sm btn-outline-danger" data-action="remove">Remove</button>
-    `;
-    item.querySelector('[data-action="open"]').addEventListener("click", () => openJobDetail(j.id));
-    item.querySelector('[data-action="remove"]').addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm(`Delete "${j.title}" @ ${j.company}? This can't be undone (works regardless of status, including applied).`)) return;
-      await fetch(`${API}/api/jobs/${j.id}`, { method: "DELETE" });
-      loadJobs();
-      if (currentJobId === j.id) {
-        document.getElementById("job-detail-card").classList.add("d-none");
-        currentJobId = null;
-      }
-    });
-    list.appendChild(item);
-  });
-}
-document.getElementById("reload-jobs-btn").addEventListener("click", loadJobs);
-document.getElementById("min-match-filter").addEventListener("change", loadJobs);
-
-document.getElementById("analyze-unanalyzed-btn").addEventListener("click", async () => {
-  const btn = document.getElementById("analyze-unanalyzed-btn");
-  const msg = document.getElementById("analyze-unanalyzed-msg");
-  btn.disabled = true;
-  btn.textContent = "Analyzing...";
-  msg.textContent = "";
-  try {
-    const res = await fetch(`${API}/api/jobs/analyze-unanalyzed`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent = `Analyzed ${data.succeeded}/${data.attempted} job(s) (${data.failed} failed).`;
-      msg.className = "d-block mb-2 text-success";
-      loadJobs();
-    } else {
-      msg.textContent = "Failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "d-block mb-2 text-danger";
+  async runFollowupsAll() {
+    setMsg('dashboard-action-msg', 'Running follow-ups...', '');
+    try {
+      const d = await API.post('/api/notifications/followups/run-all', {});
+      setMsg('dashboard-action-msg', d.message || 'Follow-ups sent!', 'success');
+      Toast.success(d.message || 'Follow-ups sent!');
+    } catch(e) {
+      setMsg('dashboard-action-msg', e.message, 'error');
+      Toast.error('Follow-ups failed: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "d-block mb-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Analyze All Unanalyzed (AI)";
-  }
-});
+  },
 
-document.getElementById("job-add-btn").addEventListener("click", async () => {
-  const msg = document.getElementById("job-add-msg");
-  const body = {
-    title: document.getElementById("job-title").value,
-    company: document.getElementById("job-company").value,
-    location: document.getElementById("job-location").value,
-    url: document.getElementById("job-url").value,
-    salary_text: document.getElementById("job-salary").value,
-    hr_email: document.getElementById("job-hr-email-input").value,
-    description: document.getElementById("job-description").value,
-    source: "manual",
-  };
-  if (!body.title || !body.company || !body.description) {
-    msg.textContent = "Title, company, and description are required";
-    msg.className = "ms-2 text-danger";
-    return;
-  }
-  const res = await fetch(`${API}/api/jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) {
-    msg.textContent = "Added ✔";
-    msg.className = "ms-2 text-success";
-    ["job-title", "job-company", "job-location", "job-url", "job-salary", "job-hr-email-input", "job-description"].forEach(
-      (id) => (document.getElementById(id).value = "")
-    );
-    loadJobs();
-  } else {
-    const err = await res.json();
-    msg.textContent = "Failed: " + JSON.stringify(err.detail || err);
-    msg.className = "ms-2 text-danger";
-  }
-});
-
-document.getElementById("excel-import-btn").addEventListener("click", async () => {
-  const fileInput = document.getElementById("excel-import-input");
-  const msg = document.getElementById("excel-import-msg");
-  if (!fileInput.files[0]) {
-    msg.textContent = "Choose a .xlsx file first";
-    msg.className = "ms-2 text-danger";
-    return;
-  }
-  const btn = document.getElementById("excel-import-btn");
-  btn.disabled = true;
-  btn.textContent = "Importing...";
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  try {
-    const res = await fetch(`${API}/api/jobs/import-excel`, { method: "POST", body: formData });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent = `Imported ${data.imported}, skipped ${data.skipped}.`;
-      if (data.errors && data.errors.length) {
-        msg.textContent += " " + data.errors.slice(0, 3).join("; ");
-      }
-      msg.className = "ms-2 text-success";
-      fileInput.value = "";
-      loadJobs();
-    } else {
-      msg.textContent = "Import failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
+  /* ═══════════════════════════════════════════════════════
+     CANDIDATE PROFILE
+     ═════════════════════════════════════════════════════ */
+  async loadProfile() {
+    try {
+      const data = await API.get('/api/candidate');
+      State.profileData = data;
+      App._fillProfile(data);
+      App._loadProfileResumesDropdown();
+    } catch(e) {
+      Toast.error('Failed to load profile: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Import";
-  }
-});
+  },
 
-async function openJobDetail(id) {
-  currentJobId = id;
-  const res = await fetch(`${API}/api/jobs/${id}`);
-  const j = await res.json();
-  currentJobUrl = j.url || "";
-  document.getElementById("job-detail-card").classList.remove("d-none");
-  document.getElementById("job-detail-title").textContent = `${j.title} @ ${j.company}`;
-  document.getElementById("job-detail-desc").textContent = j.description;
-  document.getElementById("job-status-select").value = j.status;
-  renderJobAnalysis(j.analysis);
+  _fillProfile(data) {
+    const s = (id, val) => { const el = $(id); if (el) el.value = val || ''; };
+    s('p-name',            data.name            || data.full_name || '');
+    s('p-email',           data.email           || '');
+    s('p-phone',           data.phone           || '');
+    s('p-location',        data.location        || '');
+    s('p-linkedin',        data.linkedin        || data.linkedin_url || '');
+    s('p-github',          data.github          || data.github_url  || data.portfolio_url || '');
+    s('p-summary',         data.summary         || data.professional_summary || '');
+    s('p-target-role',     data.target_role     || data.current_role || '');
+    s('p-years-exp',       data.years_experience|| data.years_of_experience || '');
+    s('p-current-company', data.current_company || '');
+    s('p-current-salary',  data.current_salary  || '');
+    s('p-expected-salary', data.expected_salary || '');
+    s('p-notice-period',   data.notice_period   || '');
+    s('p-work-auth',       data.work_authorization || data.work_auth || '');
+    s('p-work-mode',       data.preferred_work_mode || data.work_mode || '');
 
-  // Prefer the authoritative hr_email (from Excel import or manual entry) over the
-  // auto-detected hr_email_guess from the JD text - always worth double-checking either way.
-  document.getElementById("job-hr-email").value = j.hr_email || j.hr_email_guess || "";
-  document.getElementById("job-email-apply-msg").textContent = "";
-  document.getElementById("job-email-preview-block").classList.add("d-none");
+    // Skills tags
+    State.tagsData.technical = data.technical_skills || data.skills || [];
+    State.tagsData.soft      = data.soft_skills      || [];
+    State.tagsData.languages = data.languages        || [];
+    ['technical','soft','languages'].forEach(k => initTagsInput(`tags-${k}`, `tags-${k}-input`, k));
 
-  const statusEl = document.getElementById("job-application-status");
-  if (j.application_method === "email" && j.applied_at) {
-    statusEl.textContent = `Applied via email to ${j.application_email_to} on ${new Date(j.applied_at).toLocaleString()}`;
-  } else if (j.application_method === "website" && j.applied_at) {
-    statusEl.textContent = `Applied via website on ${new Date(j.applied_at).toLocaleString()}`;
-  } else {
-    statusEl.textContent = "";
-  }
+    // Accordion sections
+    App._renderAccordion('education-list',    data.education     || [], 'education');
+    App._renderAccordion('experience-list',   data.experience    || [], 'experience');
+    App._renderAccordion('projects-list',     data.projects      || [], 'projects');
+    App._renderAccordion('certs-list',        data.certifications|| [], 'certifications');
 
-  const reminderEl = document.getElementById("job-reminder-status");
-  const stages = [
-    ["1st (day 3)", j.reminder_1_sent_at],
-    ["2nd (day 5)", j.reminder_2_sent_at],
-    ["3rd (day 8)", j.reminder_3_sent_at],
-  ];
-  const sentStages = stages.filter(([, at]) => at).map(([label, at]) => `${label} sent ${new Date(at).toLocaleDateString()}`);
-  reminderEl.textContent = sentStages.length ? `Follow-ups: ${sentStages.join(", ")}` : "";
-}
+    // Template select
+    if (data.template_resume_id) {
+      const sel = $('profile-template-select');
+      if (sel) sel.value = data.template_resume_id;
+    }
+  },
 
-function renderJobAnalysis(analysis) {
-  const block = document.getElementById("job-analysis-block");
-  if (!analysis) {
-    block.classList.add("d-none");
-    return;
-  }
-  block.classList.remove("d-none");
-  document.getElementById("job-match-badge").textContent = `${analysis.match_percent}%`;
-  document.getElementById("job-match-reason").textContent = analysis.match_reason || "";
-  document.getElementById("job-experience").textContent = analysis.experience_required || "-";
-  document.getElementById("job-difficulty").textContent = analysis.interview_difficulty || "-";
+  _renderAccordion(containerId, items, type) {
+    const eduFields = [
+      { key: 'institution', label: 'Institution' },
+      { key: 'degree',      label: 'Degree / Qualification' },
+      { key: 'field',       label: 'Field of Study' },
+      { key: 'start_year',  label: 'Start Year', type: 'number' },
+      { key: 'end_year',    label: 'End Year',   type: 'number' },
+      { key: 'gpa',         label: 'GPA / Score (optional)' },
+    ];
+    const expFields = [
+      { key: 'company',     label: 'Company' },
+      { key: 'role',        label: 'Role / Title' },
+      { key: 'location',    label: 'Location' },
+      { key: 'start_date',  label: 'Start Date (e.g. Jan 2022)' },
+      { key: 'end_date',    label: 'End Date (or "Present")' },
+      { key: 'description', label: 'Description / Achievements', type: 'textarea' },
+    ];
+    const projFields = [
+      { key: 'name',        label: 'Project Name' },
+      { key: 'url',         label: 'Project URL (optional)' },
+      { key: 'tech_stack',  label: 'Tech Stack' },
+      { key: 'description', label: 'Description', type: 'textarea' },
+    ];
+    const certFields = [
+      { key: 'name',        label: 'Certification Name' },
+      { key: 'issuer',      label: 'Issuing Organization' },
+      { key: 'issued_date', label: 'Issue Date' },
+      { key: 'url',         label: 'Credential URL (optional)' },
+    ];
+    const fieldMap = { education: eduFields, experience: expFields, projects: projFields, certifications: certFields };
+    const callbackMap = {
+      education:      'App.removeEducation',
+      experience:     'App.removeExperience',
+      projects:       'App.removeProject',
+      certifications: 'App.removeCert',
+    };
+    buildAccordion(containerId, items, fieldMap[type], callbackMap[type]);
+  },
 
-  const fill = (id, items) => {
-    const el = document.getElementById(id);
-    el.innerHTML = "";
-    (items || []).forEach((s) => {
-      const li = document.createElement("li");
-      li.textContent = s;
-      el.appendChild(li);
+  async _loadProfileResumesDropdown() {
+    try {
+      const resumes = await API.get('/api/resumes');
+      const list = Array.isArray(resumes) ? resumes : (resumes.resumes || []);
+      const docxList = list.filter(r => (r.filename || r.name || '').toLowerCase().endsWith('.docx'));
+      const sel = $('profile-template-select');
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = '<option value="">— select uploaded DOCX —</option>' +
+        docxList.map(r => `<option value="${r.id}">${esc(r.filename || r.name)}</option>`).join('');
+      if (current) sel.value = current;
+    } catch { /* ignore */ }
+  },
+
+  async saveProfile() {
+    const getData = (id) => $(id)?.value || '';
+    const profile = {
+      name:                  getData('p-name'),
+      email:                 getData('p-email'),
+      phone:                 getData('p-phone'),
+      location:              getData('p-location'),
+      linkedin:              getData('p-linkedin'),
+      github:                getData('p-github'),
+      summary:               getData('p-summary'),
+      target_role:           getData('p-target-role'),
+      years_experience:      parseInt(getData('p-years-exp')) || 0,
+      current_company:       getData('p-current-company'),
+      current_salary:        getData('p-current-salary'),
+      expected_salary:       getData('p-expected-salary'),
+      notice_period:         getData('p-notice-period'),
+      work_authorization:    getData('p-work-auth'),
+      preferred_work_mode:   getData('p-work-mode'),
+      technical_skills:      State.tagsData.technical,
+      soft_skills:           State.tagsData.soft,
+      languages:             State.tagsData.languages,
+      education:             State.profileData.education     || [],
+      experience:            State.profileData.experience    || [],
+      projects:              State.profileData.projects      || [],
+      certifications:        State.profileData.certifications|| [],
+    };
+    const templateId = $('profile-template-select')?.value;
+    if (templateId) profile.template_resume_id = templateId;
+
+    setMsg('profile-save-msg', 'Saving...', '');
+    try {
+      await API.put('/api/candidate', profile);
+      setMsg('profile-save-msg', '✓ Saved!', 'success');
+      Toast.success('Profile saved!');
+      setTimeout(() => setMsg('profile-save-msg', ''), 3000);
+    } catch(e) {
+      setMsg('profile-save-msg', '✗ ' + e.message, 'error');
+      Toast.error('Save failed: ' + e.message);
+    }
+  },
+
+  async saveProfileTemplate() {
+    const id = $('profile-template-select')?.value;
+    if (!id) { Toast.warning('Select a DOCX file first'); return; }
+    try {
+      const curr = await API.get('/api/candidate');
+      await API.put('/api/candidate', { ...curr, template_resume_id: id });
+      Toast.success('Template saved!');
+    } catch(e) {
+      Toast.error('Failed: ' + e.message);
+    }
+  },
+
+  // Accordion add/remove
+  addEducationEntry()    { (State.profileData.education     = State.profileData.education     || []).push({}); App._renderAccordion('education-list',   State.profileData.education,     'education');    },
+  addExperienceEntry()   { (State.profileData.experience    = State.profileData.experience    || []).push({}); App._renderAccordion('experience-list',  State.profileData.experience,    'experience');   },
+  addProjectEntry()      { (State.profileData.projects      = State.profileData.projects      || []).push({}); App._renderAccordion('projects-list',    State.profileData.projects,      'projects');     },
+  addCertEntry()         { (State.profileData.certifications= State.profileData.certifications|| []).push({}); App._renderAccordion('certs-list',       State.profileData.certifications,'certifications');},
+  removeEducation(i)     { State.profileData.education.splice(i,1);     App._renderAccordion('education-list',   State.profileData.education,     'education');    },
+  removeExperience(i)    { State.profileData.experience.splice(i,1);    App._renderAccordion('experience-list',  State.profileData.experience,    'experience');   },
+  removeProject(i)       { State.profileData.projects.splice(i,1);      App._renderAccordion('projects-list',    State.profileData.projects,      'projects');     },
+  removeCert(i)          { State.profileData.certifications.splice(i,1);App._renderAccordion('certs-list',       State.profileData.certifications,'certifications');},
+
+  removeTag(key, idx) {
+    State.tagsData[key].splice(idx, 1);
+    initTagsInput(`tags-${key}`, `tags-${key}-input`, key);
+  },
+
+  /* ═══════════════════════════════════════════════════════
+     JOBS
+     ═════════════════════════════════════════════════════ */
+  async loadJobs() {
+    $('jobs-loading').style.display = 'block';
+    $('jobs-grid').innerHTML = '';
+    hide('jobs-empty');
+    try {
+      const data = await API.get('/api/jobs');
+      State.allJobs = Array.isArray(data) ? data : (data.jobs || []);
+      App.renderJobs();
+      App.loadFollowups();
+    } catch(e) {
+      $('jobs-loading').textContent = 'Failed to load jobs.';
+      Toast.error('Jobs load failed: ' + e.message);
+    }
+  },
+
+  renderJobs() {
+    $('jobs-loading').style.display = 'none';
+    const minMatch = parseFloat($('min-match-filter')?.value) || 0;
+    const searchQ  = ($('job-search-filter')?.value || '').toLowerCase().trim();
+    let jobs = State.allJobs;
+    if (minMatch > 0) jobs = jobs.filter(j => (j.match_score || 0) >= minMatch);
+    if (searchQ)      jobs = jobs.filter(j => {
+      const hay = `${j.title}${j.role_name}${j.company}${j.location}`.toLowerCase();
+      return hay.includes(searchQ);
     });
-  };
-  fill("job-skills-list", analysis.extracted_skills);
-  fill("job-missing-skills-list", analysis.missing_skills);
-  fill("job-learning-list", analysis.learning_suggestions);
-}
+    if (!jobs.length) { show('jobs-empty'); $('jobs-grid').innerHTML = ''; return; }
+    hide('jobs-empty');
+    $('jobs-grid').innerHTML = jobs.map(buildJobCard).join('');
+  },
 
-document.getElementById("job-detail-close").addEventListener("click", () => {
-  document.getElementById("job-detail-card").classList.add("d-none");
-  currentJobId = null;
-});
+  async addJob() {
+    const title = $('job-title')?.value.trim();
+    const company = $('job-company')?.value.trim();
+    const description = $('job-description')?.value.trim();
+    if (!title || !company || !description) {
+      Toast.warning('Title, Company, and Description are required.');
+      return;
+    }
+    setMsg('job-add-msg', 'Adding...', '');
+    try {
+      await API.post('/api/jobs', {
+        title,
+        company,
+        location:    $('job-location')?.value.trim()      || '',
+        url:         $('job-url')?.value.trim()           || '',
+        salary:      $('job-salary')?.value.trim()        || '',
+        hr_email:    $('job-hr-email-input')?.value.trim()|| '',
+        description,
+      });
+      setMsg('job-add-msg', '✓ Added!', 'success');
+      Toast.success('Job added!');
+      ['job-title','job-company','job-location','job-url','job-salary','job-hr-email-input','job-description']
+        .forEach(id => { const el = $(id); if (el) el.value = ''; });
+      App.loadJobs();
+    } catch(e) {
+      setMsg('job-add-msg', '✗ ' + e.message, 'error');
+      Toast.error('Failed to add job: ' + e.message);
+    }
+  },
 
-document.getElementById("job-status-select").addEventListener("change", async (e) => {
-  if (!currentJobId) return;
-  await fetch(`${API}/api/jobs/${currentJobId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: e.target.value }),
-  });
-  loadJobs();
-});
-
-document.getElementById("job-apply-btn").addEventListener("click", async () => {
-  if (!currentJobId) return;
-  const btn = document.getElementById("job-apply-btn");
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = "Opening...";
-  try {
-    if (currentJobUrl) {
-      let destination = currentJobUrl;
+  async runJobSearch() {
+    setMsg('search-msg', 'Searching...', '');
+    $('run-search-btn').disabled = true;
+    try {
+      const d = await API.post('/api/jobs', { action: 'search' });
+      const msg = d.message || `Found ${d.new_jobs || 0} new jobs.`;
+      setMsg('search-msg', msg, 'success');
+      Toast.success(msg);
+      App.loadJobs();
+    } catch(e) {
+      // Some implementations trigger search via a different endpoint
       try {
-        const res = await fetch(`${API}/api/jobs/${currentJobId}/resolve-url`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.url) destination = data.url;
-        }
-      } catch (e) {
-        console.error("resolve-url failed, using original link:", e);
+        const d = await API.get('/api/jobs?action=search');
+        setMsg('search-msg', 'Search complete.', 'success');
+        App.loadJobs();
+      } catch {
+        setMsg('search-msg', e.message, 'error');
+        Toast.error('Search failed: ' + e.message);
       }
-      window.open(destination, "_blank", "noopener");
-    } else {
-      alert("This job has no URL saved - marking it as applied without opening a page.");
+    } finally {
+      $('run-search-btn').disabled = false;
     }
-    await fetch(`${API}/api/jobs/${currentJobId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "applied", application_method: "website" }),
+  },
+
+  async clearNewJobs() {
+    if (!confirm('Delete all jobs with status "new"?')) return;
+    try {
+      const d = await API.del('/api/jobs/clear');
+      Toast.success(d.message || 'New jobs cleared.');
+      App.loadJobs();
+    } catch(e) {
+      Toast.error('Failed: ' + e.message);
+    }
+  },
+
+  async analyzeAllUnanalyzed() {
+    setMsg('analyze-unanalyzed-msg', 'Analyzing...', '');
+    $('analyze-unanalyzed-btn').disabled = true;
+    try {
+      const d = await API.post('/api/jobs/analyze-unanalyzed', {});
+      const msg = d.message || `Analyzed ${d.analyzed || 0} jobs.`;
+      setMsg('analyze-unanalyzed-msg', msg, 'success');
+      Toast.success(msg);
+      App.loadJobs();
+    } catch(e) {
+      setMsg('analyze-unanalyzed-msg', e.message, 'error');
+      Toast.error('Analyze failed: ' + e.message);
+    } finally {
+      $('analyze-unanalyzed-btn').disabled = false;
+    }
+  },
+
+  async importExcel() {
+    const file = $('excel-import-input')?.files[0];
+    if (!file) { Toast.warning('Select an Excel file first.'); return; }
+    setMsg('excel-import-msg', 'Importing...', '');
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const d = await API.postForm('/api/jobs/import-excel', fd);
+      setMsg('excel-import-msg', d.message || `Imported ${d.imported || 0} jobs.`, 'success');
+      Toast.success(d.message || 'Import complete!');
+      App.loadJobs();
+    } catch(e) {
+      setMsg('excel-import-msg', e.message, 'error');
+      Toast.error('Import failed: ' + e.message);
+    }
+  },
+
+  /* ── FOLLOW-UPS ────────────────────────────────────────── */
+  async loadFollowups() {
+    try {
+      const apps = await API.get('/api/applications');
+      const list = Array.isArray(apps) ? apps : (apps.applications || []);
+      const dueDates = list.filter(a => a.followup_due || a.needs_followup);
+      const card = $('followups-card');
+      if (!card) return;
+      if (!dueDates.length) { card.classList.add('d-none'); return; }
+      card.classList.remove('d-none');
+      const container = $('followups-list');
+      container.innerHTML = dueDates.map(a => `
+        <div class="resume-item" style="margin-bottom:8px">
+          <div class="resume-info">
+            <div class="resume-name">${esc(a.company)} — ${esc(a.role || a.title)}</div>
+            <div class="resume-meta">Due: ${fmtDate(a.followup_due || a.followup_date)}</div>
+          </div>
+          <button class="btn btn-secondary btn-xs" onclick="App.previewFollowup(${a.job_id || a.id})">Preview & Send</button>
+        </div>`).join('');
+    } catch { /* ignore */ }
+  },
+
+  async previewFollowup(jobId) {
+    State.followupJobId = jobId;
+    try {
+      const d = await API.post(`/api/jobs/${jobId}/apply-email/preview`, {});
+      $('followup-email-subject').value = d.subject || '';
+      $('followup-email-body').value    = d.body    || '';
+      setText('followup-preview-title', `Follow-up for Job #${jobId}`);
+      show('followup-preview-block');
+    } catch(e) {
+      Toast.error('Preview failed: ' + e.message);
+    }
+  },
+
+  async sendFollowup() {
+    if (!State.followupJobId) return;
+    try {
+      await API.post(`/api/jobs/${State.followupJobId}/apply-email`, {
+        subject: $('followup-email-subject')?.value,
+        body:    $('followup-email-body')?.value,
+      });
+      setMsg('followup-send-msg', '✓ Sent!', 'success');
+      Toast.success('Follow-up sent!');
+      hide('followup-preview-block');
+    } catch(e) {
+      setMsg('followup-send-msg', e.message, 'error');
+    }
+  },
+
+  /* ═══════════════════════════════════════════════════════
+     JOB DETAIL PANEL
+     ═════════════════════════════════════════════════════ */
+  async openJobDetail(jobId) {
+    State.currentJobId = jobId;
+    openPanel();
+
+    // Reset panel state
+    hide('jdp-analysis-result');    show('jdp-analysis-placeholder');   hide('jdp-analysis-loading');
+    hide('jdp-contacts-list');      show('jdp-contacts-placeholder');    hide('jdp-contacts-loading');
+    hide('jdp-resume-result');      show('jdp-resume-placeholder');      hide('jdp-resume-loading');
+    hide('jdp-automation-container'); show('jdp-website-placeholder');
+    hide('jdp-match-badge');
+    hide('jdp-email-preview-block');
+
+    try {
+      const job = await API.get(`/api/jobs/${jobId}`);
+      State.currentJob = job;
+      App._renderJobDetail(job);
+    } catch(e) {
+      Toast.error('Failed to load job: ' + e.message);
+    }
+  },
+
+  _renderJobDetail(job) {
+    setText('jdp-title', job.title || job.role_name || '(No Title)');
+    const metaParts = [job.company, job.location, job.experience_required, job.job_type].filter(Boolean);
+    setText('jdp-meta', metaParts.join(' · '));
+    setHtml('jdp-status-badge', `<span class="badge-dot ${job.status || 'new'}"></span>${(STATUS_MAP[job.status] || STATUS_MAP.new).label}`);
+    $('jdp-status-badge').className = `badge ${(STATUS_MAP[job.status] || STATUS_MAP.new).cls}`;
+    $('jdp-status-select').value = job.status || 'new';
+    setText('jdp-description', job.description || job.job_description || '—');
+
+    if (job.hr_email) $('jdp-hr-email').value = job.hr_email;
+
+    if (job.match_score != null) {
+      show('jdp-match-badge');
+      setText('jdp-match-badge', `${Math.round(job.match_score)}% match`);
+    }
+
+    if (job.analysis || job.match_score != null) App._renderAnalysis(job);
+    if (job.resume_generated) App._renderResumeResult(job);
+
+    App.loadJobContacts(job.id);
+    updateStepper(job);
+  },
+
+  _renderAnalysis(job) {
+    const a = job.analysis || {};
+    hide('jdp-analysis-placeholder');
+    show('jdp-analysis-result');
+
+    const skills  = a.required_skills || a.extracted_skills || [];
+    const missing = a.missing_skills  || [];
+    $('jdp-skills-list').innerHTML  = skills.map(s => `<span class="badge badge-analyzed" style="font-size:10px">${esc(s)}</span>`).join('');
+    $('jdp-missing-list').innerHTML = missing.map(s => `<span class="badge badge-failed"   style="font-size:10px">${esc(s)}</span>`).join('');
+    setText('jdp-experience', a.experience_required || job.experience_required || '—');
+    setText('jdp-difficulty', a.interview_difficulty || '—');
+
+    const learning = a.learning_suggestions || [];
+    if (learning.length) {
+      show('jdp-learning-block');
+      $('jdp-learning-list').innerHTML = learning.map(l => `<li>${esc(l)}</li>`).join('');
+    } else {
+      hide('jdp-learning-block');
+    }
+  },
+
+  _renderResumeResult(job) {
+    hide('jdp-resume-placeholder');
+    hide('jdp-resume-loading');
+    show('jdp-resume-result');
+
+    const ats = job.ats_score || 0;
+    const ring = $('jdp-ats-ring');
+    ring.textContent = ats ? `${Math.round(ats)}%` : '—';
+    ring.className = 'ats-score-ring ' + (ats >= 85 ? 'high' : ats >= 70 ? 'med' : 'low');
+
+    const warn = $('jdp-ats-warn');
+    if (ats > 0 && ats < 90) {
+      warn.textContent = `ATS score is ${Math.round(ats)}%. Consider regenerating for a higher match.`;
+      warn.classList.remove('d-none');
+    } else {
+      warn.classList.add('d-none');
+    }
+
+    $('jdp-dl-pdf-btn').href  = `/api/jobs/${job.id}/download-pdf`;
+    $('jdp-dl-docx-btn').href = `/api/jobs/${job.id}/download-docx`;
+  },
+
+  async updateJobStatus(jobId, status) {
+    try {
+      await API.put(`/api/jobs/${jobId}`, { status });
+      const card = $(`job-card-${jobId}`);
+      if (card) {
+        const topBadge = card.querySelector('.job-card-top .badge');
+        if (topBadge) topBadge.outerHTML = statusBadgeHTML(status);
+      }
+      const job = State.allJobs.find(j => j.id === jobId);
+      if (job) job.status = status;
+    } catch(e) {
+      Toast.error('Status update failed: ' + e.message);
+    }
+  },
+
+  async deleteJob() {
+    if (!State.currentJobId || !confirm('Delete this job? This cannot be undone.')) return;
+    try {
+      await API.del(`/api/jobs/${State.currentJobId}`);
+      Toast.success('Job deleted.');
+      closePanel();
+      App.loadJobs();
+    } catch(e) {
+      Toast.error('Delete failed: ' + e.message);
+    }
+  },
+
+  /* ── ANALYZE JD ────────────────────────────────────────── */
+  async analyzeJD() {
+    if (!State.currentJobId) return;
+    show('jdp-analysis-loading');
+    hide('jdp-analysis-result');
+    hide('jdp-analysis-placeholder');
+    try {
+      const d = await API.post(`/api/jobs/${State.currentJobId}/analyze-jd`, {});
+      State.currentJob = { ...State.currentJob, ...d, analysis: d };
+      App._renderAnalysis(d);
+      hide('jdp-analysis-loading');
+      Toast.success('JD analyzed!');
+      updateStepper(State.currentJob);
+    } catch {
+      // fallback to ATS analyze
+      try {
+        const d = await API.post(`/api/jobs/${State.currentJobId}/analyze`, {});
+        State.currentJob = { ...State.currentJob, ...d };
+        App._renderAnalysis(d);
+        hide('jdp-analysis-loading');
+        Toast.success('Analysis complete!');
+        updateStepper(State.currentJob);
+      } catch(e2) {
+        hide('jdp-analysis-loading');
+        show('jdp-analysis-placeholder');
+        Toast.error('Analysis failed: ' + e2.message);
+      }
+    }
+  },
+
+  async runATSAnalysis() {
+    if (!State.currentJobId) return;
+    show('jdp-analysis-loading');
+    hide('jdp-analysis-result');
+    hide('jdp-analysis-placeholder');
+    try {
+      const d = await API.post(`/api/jobs/${State.currentJobId}/analyze`, {});
+      State.currentJob = { ...State.currentJob, ...d };
+      App._renderAnalysis(d);
+      hide('jdp-analysis-loading');
+      Toast.success('ATS analysis complete!');
+      updateStepper(State.currentJob);
+    } catch(e) {
+      hide('jdp-analysis-loading');
+      show('jdp-analysis-placeholder');
+      Toast.error('Analysis failed: ' + e.message);
+    }
+  },
+
+  /* ── FIND HR CONTACTS ──────────────────────────────────── */
+  async findContacts() {
+    if (!State.currentJobId) return;
+    show('jdp-contacts-loading');
+    hide('jdp-contacts-placeholder');
+    $('jdp-contacts-list').innerHTML = '';
+    try {
+      const d = await API.post(`/api/jobs/${State.currentJobId}/find-contacts`, {});
+      hide('jdp-contacts-loading');
+      App._renderContacts(d.contacts || d || []);
+      Toast.success(`Found ${(d.contacts || d || []).length} contacts!`);
+      if (State.currentJob) { State.currentJob.contacts_count = (d.contacts || d || []).length; updateStepper(State.currentJob); }
+    } catch(e) {
+      hide('jdp-contacts-loading');
+      show('jdp-contacts-placeholder');
+      Toast.error('Find contacts failed: ' + e.message);
+    }
+  },
+
+  async loadJobContacts(jobId) {
+    try {
+      const d = await API.get(`/api/jobs/${jobId}/contacts`);
+      const list = d.contacts || d || [];
+      if (list.length) {
+        $('jdp-contacts-list').innerHTML = '';
+        App._renderContacts(list);
+        hide('jdp-contacts-placeholder');
+      }
+    } catch { /* ignore */ }
+  },
+
+  _renderContacts(contacts) {
+    const container = $('jdp-contacts-list');
+    if (!contacts.length) { show('jdp-contacts-placeholder'); return; }
+    hide('jdp-contacts-placeholder');
+    container.innerHTML = '';
+    show('jdp-contacts-list');
+    contacts.forEach(c => {
+      const conf = (c.confidence || '').toLowerCase();
+      const initials = (c.name || 'HR').split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+      const item = document.createElement('div');
+      item.className = 'contact-item';
+      item.innerHTML = `
+        <div class="contact-avatar">${initials}</div>
+        <div class="contact-info">
+          <div class="contact-name">${esc(c.name || 'Unknown')}</div>
+          <div class="contact-email">${esc(c.email || '—')}</div>
+          ${c.title ? `<div class="font-xs text-muted">${esc(c.title)}</div>` : ''}
+        </div>
+        <span class="confidence-badge confidence-${conf || 'medium'}">${esc(c.confidence || 'Medium')}</span>
+        <button class="btn btn-secondary btn-xs" onclick="document.getElementById('jdp-hr-email').value='${esc(c.email||'')}';document.getElementById('jdp-email-section').scrollIntoView({behavior:'smooth'})">Use</button>`;
+      container.appendChild(item);
     });
-    document.getElementById("job-status-select").value = "applied";
-    openJobDetail(currentJobId); // refresh the application-status line
-    loadJobs();
-  } finally {
-    btn.disabled = false;
-    btn.textContent = originalText;
-  }
-});
+  },
 
-document.getElementById("job-email-preview-btn").addEventListener("click", async () => {
-  if (!currentJobId) return;
-  const msg = document.getElementById("job-email-apply-msg");
-  const btn = document.getElementById("job-email-preview-btn");
-  btn.disabled = true;
-  btn.textContent = "Loading preview...";
-  try {
-    const res = await fetch(`${API}/api/jobs/${currentJobId}/apply-email/preview`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      document.getElementById("job-email-subject").value = data.subject || "";
-      document.getElementById("job-email-body").value = data.html_body || "";
-      if (data.hr_email_guess && !document.getElementById("job-hr-email").value) {
-        document.getElementById("job-hr-email").value = data.hr_email_guess;
+  /* ── GENERATE RESUME ───────────────────────────────────── */
+  async generateResume() {
+    if (!State.currentJobId) return;
+
+    // Show loading with steps
+    hide('jdp-resume-result');
+    hide('jdp-resume-placeholder');
+    show('jdp-resume-loading');
+    hide('jdp-gen-steps');
+
+    // Step animation
+    const steps = ['gen-step-1','gen-step-2','gen-step-3','gen-step-4'];
+    steps.forEach(s => { const el = $(s); if(el) { el.className='loading-step'; } });
+    show('jdp-gen-steps');
+
+    let stepIdx = 0;
+    const stepTimer = setInterval(() => {
+      if (stepIdx > 0) { const prev = $(steps[stepIdx-1]); if(prev) prev.className='loading-step done'; }
+      if (stepIdx < steps.length) { const curr = $(steps[stepIdx]); if(curr) curr.className='loading-step active'; stepIdx++; }
+    }, 1200);
+
+    try {
+      const d = await API.post(`/api/jobs/${State.currentJobId}/customize-resume`, {});
+      clearInterval(stepTimer);
+      steps.forEach(s => { const el=$(s); if(el) el.className='loading-step done'; });
+      hide('jdp-resume-loading');
+
+      const ats = d.ats_score || d.match_score || 0;
+      State.currentJob = { ...State.currentJob, resume_generated: true, ats_score: ats };
+      App._renderResumeResult(State.currentJob);
+      Toast.success(`Resume generated! ATS: ${Math.round(ats)}%`);
+      updateStepper(State.currentJob);
+      App.loadJobs();
+    } catch(e) {
+      clearInterval(stepTimer);
+      hide('jdp-resume-loading');
+      show('jdp-resume-placeholder');
+      Toast.error('Resume generation failed: ' + e.message);
+    }
+  },
+
+  previewResumePDF() {
+    if (!State.currentJobId) return;
+    openPDFModal(`/api/jobs/${State.currentJobId}/preview-pdf`, `Resume — ${State.currentJob?.title || 'Job'}`);
+    $('step-btn-4').classList.add('completed');
+  },
+
+  /* ── EMAIL HR ──────────────────────────────────────────── */
+  focusEmailHR() {
+    $('jdp-email-section')?.scrollIntoView({ behavior: 'smooth' });
+    $('jdp-hr-email')?.focus();
+  },
+
+  async previewPersonalizedEmail() {
+    const email = $('jdp-hr-email')?.value.trim();
+    if (!email) { Toast.warning('Enter an HR email address first.'); return; }
+    if (!State.currentJobId) return;
+
+    setMsg('jdp-email-msg', 'Loading preview...', '');
+    try {
+      const d = await API.post(`/api/jobs/${State.currentJobId}/apply-email-personalized/preview`, { hr_email: email });
+      $('jdp-email-subject').value = d.subject || '';
+      $('jdp-email-body').value    = d.body    || '';
+      show('jdp-email-preview-block');
+      setMsg('jdp-email-msg', '', '');
+    } catch(e) {
+      // Fallback to generic preview
+      try {
+        const d = await API.post(`/api/jobs/${State.currentJobId}/apply-email/preview`, { hr_email: email });
+        $('jdp-email-subject').value = d.subject || '';
+        $('jdp-email-body').value    = d.body    || '';
+        show('jdp-email-preview-block');
+        setMsg('jdp-email-msg', '');
+      } catch(e2) {
+        setMsg('jdp-email-msg', e2.message, 'error');
+        Toast.error('Preview failed: ' + e2.message);
       }
-      document.getElementById("job-email-preview-block").classList.remove("d-none");
-      msg.textContent = "Review below, edit if needed, then Confirm & Send.";
-      msg.className = "ms-2 text-muted";
-    } else {
-      msg.textContent = "Failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Preview Email";
-  }
-});
+  },
 
-document.getElementById("job-email-cancel-btn").addEventListener("click", () => {
-  document.getElementById("job-email-preview-block").classList.add("d-none");
-  document.getElementById("job-email-apply-msg").textContent = "";
-});
+  async sendPersonalizedEmail() {
+    const email   = $('jdp-hr-email')?.value.trim();
+    const subject = $('jdp-email-subject')?.value;
+    const body    = $('jdp-email-body')?.value;
+    if (!email || !State.currentJobId) return;
 
-document.getElementById("job-email-confirm-send-btn").addEventListener("click", async () => {
-  if (!currentJobId) return;
-  const hrEmail = document.getElementById("job-hr-email").value.trim();
-  const msg = document.getElementById("job-email-apply-msg");
-  if (!hrEmail) {
-    msg.textContent = "Enter an HR/recruiter email first";
-    msg.className = "ms-2 text-danger";
-    return;
-  }
-  const btn = document.getElementById("job-email-confirm-send-btn");
-  btn.disabled = true;
-  btn.textContent = "Sending...";
-  try {
-    const res = await fetch(`${API}/api/jobs/${currentJobId}/apply-email`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        hr_email: hrEmail,
-        subject: document.getElementById("job-email-subject").value,
-        html_body: document.getElementById("job-email-body").value,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.sent) {
-      msg.textContent = `Sent to ${data.recipient} ✔`;
-      msg.className = "ms-2 text-success";
-      document.getElementById("job-email-preview-block").classList.add("d-none");
-      openJobDetail(currentJobId);
-      loadJobs();
-    } else {
-      msg.textContent = "Failed: " + (data.detail || data.reason || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
-    }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Confirm & Send";
-  }
-});
-
-document.getElementById("job-delete-btn").addEventListener("click", async () => {
-  if (!currentJobId) return;
-  if (!confirm("Delete this job?")) return;
-  await fetch(`${API}/api/jobs/${currentJobId}`, { method: "DELETE" });
-  document.getElementById("job-detail-card").classList.add("d-none");
-  currentJobId = null;
-  loadJobs();
-});
-
-document.getElementById("job-analyze-btn").addEventListener("click", async () => {
-  if (!currentJobId) return;
-  const btn = document.getElementById("job-analyze-btn");
-  btn.disabled = true;
-  btn.textContent = "Analyzing...";
-  try {
-    const res = await fetch(`${API}/api/jobs/${currentJobId}/analyze`, { method: "POST" });
-    const data = await res.json();
-    if (res.ok) {
-      renderJobAnalysis(data.analysis);
-    } else {
-      alert("Analysis failed: " + JSON.stringify(data.detail || data));
-    }
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Analyze / ATS Match";
-  }
-});
-
-// ---------- Email notifications ----------
-async function loadEmailStatus() {
-  const el = document.getElementById("email-status-text");
-  try {
-    const res = await fetch(`${API}/api/notifications/status`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const providerLabels = { custom: "Custom Relay (HTTP API)", mailjet: "Mailjet (HTTP API)", brevo: "Brevo (HTTP API)", sendgrid: "SendGrid (HTTP API)", smtp: "SMTP" };
-    const providerLabel = providerLabels[data.provider] || data.provider;
-    el.textContent = data.configured
-      ? `Configured ✔ (via ${providerLabel})`
-      : `Not configured (provider: ${providerLabel} - set the matching vars in .env)`;
-    el.className = data.configured ? "text-success" : "text-muted";
-  } catch (e) {
-    el.textContent = "Could not check status: " + e.message;
-    el.className = "text-danger";
-  }
-}
-
-document.getElementById("send-test-email-btn").addEventListener("click", async () => {
-  const msg = document.getElementById("email-test-msg");
-  msg.textContent = "Sending...";
-  msg.className = "ms-2 text-muted";
-  try {
-    const res = await fetch(`${API}/api/notifications/test-email`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent = `Sent to ${data.recipient} ✔`;
-      msg.className = "ms-2 text-success";
-    } else {
-      msg.textContent = "Failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
-    }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  }
-});
-
-// ---------- Job search ----------
-document.getElementById("run-search-btn").addEventListener("click", async () => {
-  const btn = document.getElementById("run-search-btn");
-  const msg = document.getElementById("search-msg");
-  btn.disabled = true;
-  btn.textContent = "Searching...";
-  msg.textContent = "";
-  try {
-    const res = await fetch(`${API}/api/jobsearch/run`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent =
-        `Found ${data.fetched_total}, added ${data.new_jobs_added} new. ` +
-        `Skipped: ${data.skipped_duplicate} duplicate, ${data.skipped_irrelevant ?? 0} not relevant enough ` +
-        `(needed ${data.min_keyword_hits_required ?? "?"} keyword matches), ` +
-        `${data.skipped_language ?? 0} wrong language (target: ${data.target_language ?? "English"}), ` +
-        `${data.skipped_location ?? 0} wrong location, ${data.skipped_job_type ?? 0} wrong job type, ` +
-        `${data.skipped_experience ?? 0} too senior, ${data.skipped_stale ?? 0} too old, ` +
-        `${data.skipped_filtered} filtered (blacklist/exclude).`;
-      if (data.source_errors && Object.keys(data.source_errors).length) {
-        msg.textContent += " Source errors: " + JSON.stringify(data.source_errors);
+    $('jdp-email-send-btn').disabled = true;
+    try {
+      await API.post(`/api/jobs/${State.currentJobId}/apply-email-personalized`, { hr_email: email, subject, body });
+      Toast.success('Email sent!');
+      hide('jdp-email-preview-block');
+      if (State.currentJob) { State.currentJob.status = 'email_sent'; updateStepper(State.currentJob); }
+      App.loadJobs();
+    } catch {
+      // Fallback
+      try {
+        await API.post(`/api/jobs/${State.currentJobId}/apply-email`, { hr_email: email, subject, body });
+        Toast.success('Email sent!');
+        hide('jdp-email-preview-block');
+        App.loadJobs();
+      } catch(e2) {
+        Toast.error('Send failed: ' + e2.message);
       }
-      msg.className = "ms-2 text-success";
-      loadJobs();
-    } else {
-      msg.textContent = "Search failed: " + (data.detail ? JSON.stringify(data.detail) : `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
+    } finally {
+      $('jdp-email-send-btn').disabled = false;
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Search Jobs Now";
-  }
-});
+  },
 
-document.getElementById("clear-jobs-btn").addEventListener("click", async () => {
-  if (!confirm('Delete all jobs with status "New"? Saved/Applied/Interview/Offer jobs are kept.')) return;
-  const msg = document.getElementById("search-msg");
-  try {
-    const res = await fetch(`${API}/api/jobs/clear?status=new`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent = `Cleared ${data.deleted} job(s).`;
-      msg.className = "ms-2 text-success";
-      loadJobs();
-    } else {
-      msg.textContent = "Clear failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
+  /* ── WEBSITE APPLY ─────────────────────────────────────── */
+  async startWebsiteApply() {
+    if (!State.currentJobId) return;
+    hide('jdp-website-placeholder');
+    show('jdp-automation-container');
+    hide('jdp-captcha-alert');
+    hide('jdp-confirm-alert');
+    hide('jdp-screenshot-wrap');
+    hide('jdp-fields-preview-wrap');
+    setText('jdp-auto-status-text', 'Opening browser...');
+    $('jdp-auto-status-header').querySelector('.spinner')?.classList.remove('d-none');
+
+    try {
+      await API.post(`/api/jobs/${State.currentJobId}/apply-website`, {});
+      startAutomationPoll(State.currentJobId);
+    } catch(e) {
+      setText('jdp-auto-status-text', 'Failed: ' + e.message);
+      Toast.error('Browser automation failed: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  }
-});
+  },
 
-async function loadFollowupsDue() {
-  try {
-    const res = await fetch(`${API}/api/notifications/followups/due`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const jobs = await res.json();
-    const card = document.getElementById("followups-card");
-    const list = document.getElementById("followups-list");
-    if (!jobs.length) {
-      card.classList.add("d-none");
+  async pollAutomationStatus(jobId) {
+    try {
+      const d = await API.get(`/api/jobs/${jobId}/apply-website/status`);
+      const status = (d.status || '').toUpperCase();
+      setText('jdp-auto-status-text', d.message || status);
+
+      if (status === 'CAPTCHA_REQUIRED') {
+        show('jdp-captcha-alert');
+        hide('jdp-confirm-alert');
+        stopAutomationPoll();
+      } else if (status === 'AWAITING_CONFIRMATION') {
+        hide('jdp-captcha-alert');
+        show('jdp-confirm-alert');
+        stopAutomationPoll();
+      } else if (status === 'COMPLETED' || status === 'APPLIED') {
+        hide('jdp-captcha-alert');
+        hide('jdp-confirm-alert');
+        stopAutomationPoll();
+        Toast.success('Application submitted!');
+        if (State.currentJob) { State.currentJob.status = 'applied'; updateStepper(State.currentJob); }
+        App.loadJobs();
+      } else if (status === 'ERROR' || status === 'FAILED') {
+        stopAutomationPoll();
+        Toast.error('Automation error: ' + (d.message || 'Unknown error'));
+      }
+
+      // Screenshot
+      if (d.screenshot) {
+        show('jdp-screenshot-wrap');
+        $('jdp-screenshot').src = d.screenshot.startsWith('data:') ? d.screenshot : `data:image/png;base64,${d.screenshot}`;
+      }
+
+      // Form fields preview
+      if (d.fields && d.fields.length) {
+        show('jdp-fields-preview-wrap');
+        $('jdp-fields-tbody').innerHTML = d.fields.map(f => `
+          <tr>
+            <td>${esc(f.name || f.field)}</td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.value || '—')}</td>
+            <td class="field-status-${(f.status||'').toLowerCase()}">${esc(f.status || '—')}</td>
+          </tr>`).join('');
+      }
+    } catch(e) {
+      console.warn('Automation poll error:', e.message);
+    }
+  },
+
+  async continueAfterCaptcha() {
+    if (!State.currentJobId) return;
+    try {
+      await API.post(`/api/jobs/${State.currentJobId}/apply-website/continue`, {});
+      hide('jdp-captcha-alert');
+      setText('jdp-auto-status-text', 'Continuing...');
+      startAutomationPoll(State.currentJobId);
+    } catch(e) { Toast.error('Continue failed: ' + e.message); }
+  },
+
+  async confirmWebApply() {
+    if (!State.currentJobId) return;
+    $('jdp-confirm-alert').querySelector('button')?.setAttribute('disabled','true');
+    try {
+      await API.post(`/api/jobs/${State.currentJobId}/apply-website/confirm`, {});
+      hide('jdp-confirm-alert');
+      Toast.success('Application confirmed and submitted!');
+      if (State.currentJob) { State.currentJob.status = 'applied'; updateStepper(State.currentJob); }
+      App.loadJobs();
+    } catch(e) { Toast.error('Confirm failed: ' + e.message); }
+  },
+
+  async cancelWebApply() {
+    if (!State.currentJobId) return;
+    stopAutomationPoll();
+    try {
+      await API.post(`/api/jobs/${State.currentJobId}/apply-website/cancel`, {});
+      hide('jdp-automation-container');
+      show('jdp-website-placeholder');
+      Toast.info('Automation cancelled.');
+    } catch(e) {
+      Toast.error('Cancel failed: ' + e.message);
+    }
+  },
+
+  /* ═══════════════════════════════════════════════════════
+     RESUMES
+     ═════════════════════════════════════════════════════ */
+  async loadResumes() {
+    const container = $('resumes-list');
+    if (!container) return;
+    container.innerHTML = '<div class="text-muted font-sm">Loading...</div>';
+    try {
+      const data = await API.get('/api/resumes');
+      State.allResumes = Array.isArray(data) ? data : (data.resumes || []);
+      App._renderResumeList();
+      App._loadProfileResumesDropdown();
+    } catch(e) {
+      container.innerHTML = `<div class="text-muted font-sm">Failed: ${esc(e.message)}</div>`;
+    }
+  },
+
+  _renderResumeList() {
+    const container = $('resumes-list');
+    if (!State.allResumes.length) {
+      container.innerHTML = '<div class="text-muted font-sm">No resumes uploaded yet.</div>';
       return;
     }
-    card.classList.remove("d-none");
-    list.innerHTML = "";
-    jobs.forEach((j) => {
-      const row = document.createElement("div");
-      row.className = "d-flex justify-content-between align-items-center border-bottom py-1";
-      const stageLabel = ["", "1st", "2nd", "3rd"][j.next_reminder_stage] || "next";
-      const target = j.hr_email || j.hr_email_guess || "(no HR email - will notify you instead)";
-      row.innerHTML = `
-        <span><strong>${j.title}</strong> @ ${j.company}
-          <span class="text-muted small ms-2">applied ${j.applied_at ? new Date(j.applied_at).toLocaleDateString() : ""} · ${stageLabel} reminder → ${target}</span>
-        </span>
-        <button class="btn btn-sm btn-outline-primary">Preview ${stageLabel} Reminder</button>
-      `;
-      row.querySelector("button").addEventListener("click", () => openFollowupPreview(j.id, j.next_reminder_stage, j.title, j.company));
-      list.appendChild(row);
-    });
-  } catch (e) {
-    console.error("loadFollowupsDue failed:", e);
-    // Non-fatal: leave the follow-ups card hidden rather than breaking the rest of the page.
-  }
-}
+    container.innerHTML = State.allResumes.map(r => {
+      const isDefault = r.is_default;
+      const ext = (r.filename || r.name || '').split('.').pop().toUpperCase();
+      const icon = ext === 'PDF' ? '📕' : '📘';
+      return `
+        <div class="resume-item" id="resume-item-${r.id}">
+          <div class="resume-icon">${icon}</div>
+          <div class="resume-info">
+            <div class="resume-name">${esc(r.filename || r.name)}</div>
+            <div class="resume-meta">
+              ${isDefault ? '<span class="badge badge-ready" style="font-size:9px">DEFAULT</span>' : ''}
+              ${fmtDate(r.uploaded_at || r.created_at)}
+              ${r.version ? ` · v${r.version}` : ''}
+            </div>
+          </div>
+          <div class="resume-actions">
+            <button class="btn btn-secondary btn-xs" onclick="App.showResumeDetail(${r.id})">Details</button>
+            ${!isDefault ? `<button class="btn btn-ghost btn-xs" onclick="App.setResumeDefaultById(${r.id})">Set Default</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  },
 
-let currentFollowupJobId = null;
-let currentFollowupStage = null;
-
-async function openFollowupPreview(jobId, stage, title, company) {
-  currentFollowupJobId = jobId;
-  currentFollowupStage = stage;
-  const block = document.getElementById("followup-preview-block");
-  const msg = document.getElementById("followup-send-msg");
-  msg.textContent = "";
-  try {
-    const res = await fetch(`${API}/api/notifications/followups/${jobId}/preview?stage=${stage}`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      document.getElementById("followup-preview-title").textContent = `${title} @ ${company}`;
-      document.getElementById("followup-email-subject").value = data.subject || "";
-      document.getElementById("followup-email-body").value = data.html_body || "";
-      block.classList.remove("d-none");
-      block.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    } else {
-      msg.textContent = "Preview failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
+  async uploadResume(droppedFile) {
+    const file = droppedFile || $('resume-file-input')?.files[0];
+    if (!file) { Toast.warning('Select a file first.'); return; }
+    const isDefault = $('resume-set-default')?.checked || false;
+    setMsg('resume-upload-msg', 'Uploading...', '');
+    const fd = new FormData();
+    fd.append('file', file);
+    if (isDefault) fd.append('set_default', 'true');
+    try {
+      const d = await API.postForm('/api/resumes/upload', fd);
+      setMsg('resume-upload-msg', '✓ Uploaded!', 'success');
+      Toast.success('Resume uploaded!');
+      $('resume-file-input').value = '';
+      App.loadResumes();
+    } catch(e) {
+      setMsg('resume-upload-msg', '✗ ' + e.message, 'error');
+      Toast.error('Upload failed: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  }
-}
+  },
 
-document.getElementById("followup-cancel-btn").addEventListener("click", () => {
-  document.getElementById("followup-preview-block").classList.add("d-none");
-  currentFollowupJobId = null;
-  currentFollowupStage = null;
-});
+  async showResumeDetail(resumeId) {
+    State.currentResumeId = resumeId;
+    const resume = State.allResumes.find(r => r.id === resumeId);
+    if (!resume) return;
+    setText('resume-detail-title', resume.filename || resume.name);
+    setText('resume-detail-text', resume.extracted_text || '(No text extracted yet)');
+    // Versions
+    const ul = $('resume-versions-list');
+    const versions = resume.versions || [];
+    ul.innerHTML = versions.map((v,i) => `
+      <li class="resume-item" style="padding:8px 12px">
+        <div class="resume-info"><div class="resume-name font-sm">v${v.version || i+1}</div><div class="resume-meta">${fmtDate(v.uploaded_at)}</div></div>
+      </li>`).join('') || '<li class="text-muted font-sm" style="padding:6px 0">No version history</li>';
+    hide('resume-analysis-block');
+    show('resume-detail-card');
+    $('resume-detail-card').scrollIntoView({ behavior: 'smooth' });
+  },
 
-document.getElementById("followup-confirm-send-btn").addEventListener("click", async () => {
-  if (!currentFollowupJobId) return;
-  const msg = document.getElementById("followup-send-msg");
-  const btn = document.getElementById("followup-confirm-send-btn");
-  btn.disabled = true;
-  btn.textContent = "Sending...";
-  try {
-    const res = await fetch(`${API}/api/notifications/followups/${currentFollowupJobId}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subject: document.getElementById("followup-email-subject").value,
-        html_body: document.getElementById("followup-email-body").value,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.sent) {
-      msg.textContent = `Sent to ${data.recipient || "candidate"} ✔`;
-      msg.className = "ms-2 text-success";
-      document.getElementById("followup-preview-block").classList.add("d-none");
-      currentFollowupJobId = null;
-      loadFollowupsDue();
-    } else {
-      msg.textContent = "Failed: " + (data.detail || data.reason || `HTTP ${res.status}`);
-      msg.className = "ms-2 text-danger";
+  async setResumeDefault()        { await App.setResumeDefaultById(State.currentResumeId); },
+  async setResumeDefaultById(id)  {
+    try {
+      await API.put(`/api/resumes/${id}/default`, {});
+      Toast.success('Set as default!');
+      App.loadResumes();
+    } catch(e) {
+      Toast.error('Failed: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "ms-2 text-danger";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Confirm & Send";
-  }
-});
+  },
 
-// ---------- Cover Letters ----------
-async function loadCoverLetters() {
-  try {
-    const res = await fetch(`${API}/api/cover-letters`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const items = await res.json();
-    const list = document.getElementById("cl-list");
-    list.innerHTML = "";
-    if (!items.length) {
-      list.innerHTML = '<div class="text-muted">No cover letters uploaded yet.</div>';
+  async deleteResume() {
+    if (!State.currentResumeId || !confirm('Delete this resume?')) return;
+    try {
+      await API.del(`/api/resumes/${State.currentResumeId}`);
+      Toast.success('Resume deleted.');
+      hide('resume-detail-card');
+      App.loadResumes();
+    } catch(e) {
+      Toast.error('Delete failed: ' + e.message);
+    }
+  },
+
+  async uploadResumeVersion() {
+    if (!State.currentResumeId) return;
+    const file = $('resume-version-input')?.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      await API.postForm(`/api/resumes/upload`, fd);
+      Toast.success('New version uploaded!');
+      App.loadResumes();
+    } catch(e) {
+      Toast.error('Upload failed: ' + e.message);
+    }
+  },
+
+  async analyzeResume() {
+    if (!State.currentResumeId) return;
+    $('resume-analyze-btn').disabled = true;
+    $('resume-analyze-btn').textContent = 'Analyzing...';
+    try {
+      const d = await API.post(`/api/resumes/${State.currentResumeId}/analyze`, {});
+      show('resume-analysis-block');
+      setText('resume-analysis-text', typeof d.analysis === 'string' ? d.analysis : JSON.stringify(d.analysis || d, null, 2));
+      Toast.success('Analysis complete!');
+    } catch(e) {
+      Toast.error('Analyze failed: ' + e.message);
+    } finally {
+      $('resume-analyze-btn').disabled = false;
+      $('resume-analyze-btn').textContent = '🤖 Analyze with AI';
+    }
+  },
+
+  /* ═══════════════════════════════════════════════════════
+     SETTINGS
+     ═════════════════════════════════════════════════════ */
+  async loadSettings() {
+    try {
+      const s = await API.get('/api/settings');
+      setText('disp_ai_provider',    s.ai_provider     || '—');
+      setText('disp_ollama_base_url',s.ollama_base_url  || '—');
+      setText('disp_ollama_model',   s.ollama_model     || '—');
+      setText('disp_gemini_key',     s.gemini_api_key_set ? '●●●●●●●● (set)' : '(not set)');
+      const sel = $('gemini-model-select');
+      if (sel && s.gemini_model) {
+        // Ensure option exists
+        let opt = sel.querySelector(`option[value="${s.gemini_model}"]`);
+        if (!opt) { opt = new Option(s.gemini_model, s.gemini_model); sel.appendChild(opt); }
+        sel.value = s.gemini_model;
+      }
+    } catch(e) {
+      Toast.error('Settings load failed: ' + e.message);
+    }
+
+    App.loadEmailStatus();
+    App.loadConfig();
+    App._loadConfigPrefs();
+  },
+
+  async loadEmailStatus() {
+    try {
+      const d = await API.get('/api/notifications/status');
+      const ok = d.configured || d.status === 'ok';
+      setText('email-status-text', ok ? `✓ Configured (${d.provider || 'email'})` : `✗ Not configured`);
+      $('email-status-text').style.color = ok ? 'var(--green)' : 'var(--red)';
+    } catch {
+      setText('email-status-text', 'Could not check status');
+    }
+  },
+
+  async saveGeminiModel() {
+    const model = $('gemini-model-select')?.value;
+    if (!model) return;
+    setMsg('gemini-model-msg', 'Saving...', '');
+    try {
+      await API.put('/api/settings', { gemini_model: model });
+      setMsg('gemini-model-msg', '✓ Saved', 'success');
+      setTimeout(() => setMsg('gemini-model-msg',''), 3000);
+      App.checkAI();
+    } catch(e) {
+      setMsg('gemini-model-msg', '✗ ' + e.message, 'error');
+    }
+  },
+
+  async testAIConnection() {
+    setMsg('settings-msg', 'Testing...', '');
+    $('test-ai-btn').disabled = true;
+    try {
+      const d = await API.get('/api/ai/health');
+      const ok = d.status === 'ok' || d.healthy;
+      setMsg('settings-msg', ok ? '✓ Connection OK' : '✗ Connection failed', ok ? 'success' : 'error');
+      if (ok) Toast.success('AI connection OK!');
+      else    Toast.error('AI connection failed');
+      App.checkAI();
+    } catch(e) {
+      setMsg('settings-msg', '✗ ' + e.message, 'error');
+    } finally {
+      $('test-ai-btn').disabled = false;
+    }
+  },
+
+  async sendTestEmail() {
+    setMsg('email-test-msg', 'Sending...', '');
+    $('send-test-email-btn').disabled = true;
+    try {
+      const d = await API.post('/api/notifications/test-email', {});
+      setMsg('email-test-msg', d.message || '✓ Sent!', 'success');
+      Toast.success('Test email sent!');
+    } catch(e) {
+      setMsg('email-test-msg', '✗ ' + e.message, 'error');
+      Toast.error('Test email failed: ' + e.message);
+    } finally {
+      $('send-test-email-btn').disabled = false;
+    }
+  },
+
+  async _loadConfigPrefs() {
+    try {
+      const cfg = await API.get('/api/config');
+      if (cfg.language)              $('pref-language').value = cfg.language;
+      if (cfg.job_posted_within_days) $('pref-posted-within-days').value = cfg.job_posted_within_days;
+    } catch { /* ignore */ }
+  },
+
+  async saveLanguagePref() {
+    const lang = $('pref-language')?.value;
+    setMsg('pref-language-msg', 'Saving...', '');
+    try {
+      const cfg = await API.get('/api/config');
+      await API.put('/api/config', { ...cfg, language: lang });
+      setMsg('pref-language-msg', '✓ Saved', 'success');
+      setTimeout(() => setMsg('pref-language-msg',''), 2500);
+    } catch(e) {
+      setMsg('pref-language-msg', '✗ ' + e.message, 'error');
+    }
+  },
+
+  async savePostedWithin() {
+    const days = parseInt($('pref-posted-within-days')?.value);
+    if (!days || days < 1) { Toast.warning('Enter a valid number of days.'); return; }
+    setMsg('pref-posted-within-msg', 'Saving...', '');
+    try {
+      const cfg = await API.get('/api/config');
+      await API.put('/api/config', { ...cfg, job_posted_within_days: days });
+      setMsg('pref-posted-within-msg', '✓ Saved', 'success');
+      setTimeout(() => setMsg('pref-posted-within-msg',''), 2500);
+    } catch(e) {
+      setMsg('pref-posted-within-msg', '✗ ' + e.message, 'error');
+    }
+  },
+
+  async loadConfig() {
+    try {
+      const cfg = await API.get('/api/config');
+      $('config-json').value = JSON.stringify(cfg, null, 2);
+      setMsg('config-msg', '');
+    } catch(e) {
+      setMsg('config-msg', 'Load failed: ' + e.message, 'error');
+    }
+  },
+
+  async saveConfig() {
+    const raw = $('config-json')?.value;
+    setMsg('config-msg', 'Saving...', '');
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch {
+      setMsg('config-msg', '✗ Invalid JSON', 'error');
+      Toast.error('Invalid JSON — check syntax.');
       return;
     }
-    items.forEach((c) => {
-      const row = document.createElement("div");
-      row.className = "list-group-item d-flex justify-content-between align-items-center";
-      row.innerHTML = `
-        <span>${c.is_default ? "⭐ " : ""}<strong>${c.filename}</strong>
-          <span class="text-muted small ms-2">${new Date(c.uploaded_at).toLocaleString()}</span>
-        </span>
-        <span>
-          <button class="btn btn-sm btn-outline-primary me-1" data-action="default">Set Default</button>
-          <button class="btn btn-sm btn-outline-danger" data-action="delete">Delete</button>
-        </span>
-      `;
-      row.querySelector('[data-action="default"]').addEventListener("click", async () => {
-        await fetch(`${API}/api/cover-letters/${c.id}/default`, { method: "PUT" });
-        loadCoverLetters();
-        loadConfig(); // config.default_cover_letter is synced server-side - refresh to show it
-      });
-      row.querySelector('[data-action="delete"]').addEventListener("click", async () => {
-        if (!confirm("Delete this cover letter?")) return;
-        await fetch(`${API}/api/cover-letters/${c.id}`, { method: "DELETE" });
-        loadCoverLetters();
-      });
-      list.appendChild(row);
-    });
-  } catch (e) {
-    console.error("loadCoverLetters failed:", e);
-  }
-}
-
-document.getElementById("cl-upload-btn").addEventListener("click", async () => {
-  const fileInput = document.getElementById("cl-file-input");
-  const msg = document.getElementById("cl-upload-msg");
-  if (!fileInput.files[0]) {
-    msg.textContent = "Choose a file first";
-    msg.className = "text-danger";
-    return;
-  }
-  const isDefault = document.getElementById("cl-set-default").checked;
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  try {
-    const res = await fetch(`${API}/api/cover-letters/upload?is_default=${isDefault}`, {
-      method: "POST",
-      body: formData,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) {
-      msg.textContent = "Uploaded ✔";
-      msg.className = "text-success";
-      fileInput.value = "";
-      loadCoverLetters();
-    } else {
-      msg.textContent = "Upload failed: " + (data.detail || `HTTP ${res.status}`);
-      msg.className = "text-danger";
+    try {
+      await API.put('/api/config', parsed);
+      setMsg('config-msg', '✓ Saved!', 'success');
+      Toast.success('Config saved!');
+      setTimeout(() => setMsg('config-msg',''), 3000);
+    } catch(e) {
+      setMsg('config-msg', '✗ ' + e.message, 'error');
+      Toast.error('Save failed: ' + e.message);
     }
-  } catch (e) {
-    msg.textContent = "Request failed: " + e.message;
-    msg.className = "text-danger";
-  }
-});
+  },
 
-// ---------- Version badge ----------
-async function loadVersion() {
-  const dot = document.getElementById("version-dot");
-  try {
-    const res = await fetch(`${API}/api/version`);
-    const data = await res.json();
-    document.getElementById("version-badge").textContent = data.version || "unknown";
-    dot.className = "status-dot ok";
-  } catch (e) {
-    document.getElementById("version-badge").textContent = "version unknown";
-    dot.className = "status-dot bad";
-  }
-}
+  uploadConfigFile() {
+    const file = $('config-file-input')?.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        $('config-json').value = JSON.stringify(parsed, null, 2);
+        setMsg('config-msg', 'File loaded — click Save to apply.', '');
+        Toast.info('JSON file loaded. Click Save to apply.');
+      } catch {
+        Toast.error('Invalid JSON file.');
+      }
+    };
+    reader.readAsText(file);
+  },
+};
 
-// ---------- Job language preference ----------
-async function loadLanguagePref() {
-  try {
-    const res = await fetch(`${API}/api/config`);
-    const cfg = await res.json();
-    document.getElementById("pref-language").value = cfg.language || "English";
-    document.getElementById("pref-posted-within-days").value = cfg.job_posted_within_days ?? 45;
-  } catch (e) {
-    console.error("loadLanguagePref failed:", e);
-  }
-}
-
-document.getElementById("pref-posted-within-save-btn").addEventListener("click", async () => {
-  const msg = document.getElementById("pref-posted-within-msg");
-  const days = document.getElementById("pref-posted-within-days").value;
-  try {
-    const res = await fetch(`${API}/api/config`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_posted_within_days: parseInt(days, 10) }),
-    });
-    if (res.ok) {
-      msg.textContent = "Saved ✔";
-      msg.className = "ms-2 text-success";
-      loadConfig();
-    } else {
-      msg.textContent = "Failed to save";
-      msg.className = "ms-2 text-danger";
-    }
-  } catch (err) {
-    msg.textContent = "Request failed: " + err.message;
-    msg.className = "ms-2 text-danger";
-  }
-});
-
-document.getElementById("pref-language").addEventListener("change", async (e) => {
-  const msg = document.getElementById("pref-language-msg");
-  try {
-    const res = await fetch(`${API}/api/config`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language: e.target.value }),
-    });
-    if (res.ok) {
-      msg.textContent = "Saved ✔";
-      msg.className = "ms-2 text-success";
-      loadConfig();
-    } else {
-      msg.textContent = "Failed to save";
-      msg.className = "ms-2 text-danger";
-    }
-  } catch (err) {
-    msg.textContent = "Request failed: " + err.message;
-    msg.className = "ms-2 text-danger";
-  }
-});
-
-// ---------- Init ----------
-loadSettings();
-loadConfig();
-loadResumes();
-loadJobs();
-loadEmailStatus();
-loadFollowupsDue();
-loadCoverLetters();
-loadVersion();
-loadLanguagePref();
+/* ─────────────────────────────────────────────────────────
+   BOOT
+   ───────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => App.init());
