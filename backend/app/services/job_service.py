@@ -216,11 +216,21 @@ async def apply_via_email(
 ) -> dict:
     """
     Sends a professional application email to `hr_email` with the
-    default (or specified) resume attached, and cover letter if one is
-    set. On success, marks the job applied and records how/who it was
-    sent to for tracking and follow-up reminders.
+    resume and cover letter attached. On success, marks the job applied
+    and records tracking info.
     """
     job = await get_job(job_id)
+
+    # Check if a generated resume exists for this job
+    gen_id = job.get("generated_resume_id")
+    if gen_id:
+        return await agent_orchestrator_service.run_email_application(
+            job_id=job_id,
+            hr_email=hr_email,
+            subject_override=subject_override,
+            html_override=html_override,
+            generated_resume_id=gen_id,
+        )
 
     if resume_id:
         resume_content, resume_filename = await resume_service.get_resume_file(resume_id)
@@ -233,6 +243,8 @@ async def apply_via_email(
     if not resume_content:
         raise ValueError("Resume file content is missing - try re-uploading the resume")
 
+    resume_filename = "TamilselvanG_Resume.pdf" if resume_filename.endswith(".pdf") else "TamilselvanG_Resume.docx"
+
     cover_letter_content, cover_letter_filename = b"", ""
     if cover_letter_id:
         cover_letter_content, cover_letter_filename = await cover_letter_service.get_cover_letter_file(cover_letter_id)
@@ -240,6 +252,9 @@ async def apply_via_email(
         default_cl = await cover_letter_service.get_default_cover_letter()
         if default_cl:
             cover_letter_content, cover_letter_filename = await cover_letter_service.get_cover_letter_file(default_cl["id"])
+
+    if cover_letter_content:
+        cover_letter_filename = "TamilselvanG_CoverLetter.pdf"
 
     result = await email_service.send_application_email(
         job=job,

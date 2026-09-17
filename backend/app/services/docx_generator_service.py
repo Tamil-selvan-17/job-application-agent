@@ -432,15 +432,13 @@ def generate_resume_docx(
 
 def build_resume_filename(
     candidate_profile: dict,
-    company: str,
-    job_title: str,
+    company: str = "",
+    job_title: str = "",
     extension: str = "docx",
 ) -> str:
-    personal = candidate_profile.get("personal", {})
-    first = personal.get("first_name", "") or ""
-    last = personal.get("last_name", "") or ""
-    date_str = datetime.now().strftime("%Y_%m_%d")
-    safe_company = re.sub(r"[^A-Za-z0-9]", "_", company)[:20]
-    safe_role = re.sub(r"[^A-Za-z0-9]", "_", job_title)[:20]
-    safe_name = f"{first}_{last}".strip("_") or "Resume"
-    return f"{safe_name}_{safe_company}_{safe_role}_{date_str}.{extension}"
+    personal = (candidate_profile or {}).get("personal", {})
+    full_name = personal.get("full_name") or f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip()
+    clean_name = re.sub(r"[^A-Za-z0-9]", "", full_name)
+    if not clean_name:
+        clean_name = "TamilselvanG"
+    return f"{clean_name}_Resume.{extension}"

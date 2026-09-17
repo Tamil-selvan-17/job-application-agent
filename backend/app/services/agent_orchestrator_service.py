@@ -183,9 +183,7 @@ async def run_resume_pipeline(job_id: str, force_regenerate: bool = False) -> di
             company=job.get("company", ""),
             cover_letter_text=cover_letter_text,
         )
-        safe_company = "".join(c for c in job.get("company", "Company") if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-        safe_title = "".join(c for c in job.get("title", "Role") if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-        cover_letter_filename = f"Cover_Letter_{safe_company}_{safe_title}.pdf"
+        cover_letter_filename = "TamilselvanG_CoverLetter.pdf"
     except Exception as e:
         logger.warning("[Orchestrator] Cover letter generation failed: %s", e)
         cover_letter_pdf_bytes = None
@@ -270,9 +268,39 @@ async def run_email_application(
     if not pdf_bytes:
         raise ValueError("PDF resume content is missing. Please regenerate the resume.")
 
-    attachments = [(pdf_bytes, pdf_filename)]
+    profile = await candidate_service.get_profile() or {}
+    personal = profile.get("personal", {})
+    full_name = personal.get("full_name") or f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip()
+    clean_name = re.sub(r"[^A-Za-z0-9]", "", full_name)
+    if not clean_name:
+        clean_name = "TamilselvanG"
+
+    resume_attach_name = f"{clean_name}_Resume.pdf"
+    cover_letter_attach_name = f"{clean_name}_CoverLetter.pdf"
+
+    # If Cover Letter PDF is missing, generate it dynamically on the fly
+    if not cl_pdf_bytes:
+        try:
+            jd_analysis = job.get("jd_analysis", {})
+            original_resume_id = profile.get("original_resume_id", "")
+            original_resume_text = await _get_resume_text(original_resume_id) if original_resume_id else ""
+            cover_letter_text = await resume_customizer_service.generate_cover_letter_text(
+                candidate_profile=profile,
+                jd_analysis=jd_analysis,
+                original_resume_text=original_resume_text,
+            )
+            cl_pdf_bytes = pdf_generator_service.generate_cover_letter_pdf(
+                candidate_profile=profile,
+                job_title=job.get("title", ""),
+                company=job.get("company", ""),
+                cover_letter_text=cover_letter_text,
+            )
+        except Exception as e:
+            logger.warning("[Orchestrator] On-the-fly cover letter generation failed: %s", e)
+
+    attachments = [(pdf_bytes, resume_attach_name)]
     if cl_pdf_bytes:
-        attachments.append((cl_pdf_bytes, cl_filename or "Cover_Letter.pdf"))
+        attachments.append((cl_pdf_bytes, cover_letter_attach_name))
 
     config = await config_service.get_config()
     profile = await candidate_service.get_profile()
