@@ -216,12 +216,12 @@ function buildJobCard(job) {
       </div>
     </div>
     <div class="job-card-actions" onclick="event.stopPropagation()">
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.analyzeJD())">Analyze JD</button>
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.findContacts())">Find HR</button>
-      <button class="btn btn-primary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.generateResume())">Gen Resume</button>
-      ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.previewResumePDF())">Preview PDF</button>` : ''}
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.focusEmailHR())">Email HR</button>
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.startWebsiteApply())">Apply Web</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.triggerAnalyzeJD('${job.id}')">Analyze JD</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.triggerFindContacts('${job.id}')">Find HR</button>
+      <button class="btn btn-primary btn-xs" onclick="App.triggerGenerateResume('${job.id}')">Gen Resume</button>
+      ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.triggerPreviewPDF('${job.id}')">Preview PDF</button>` : ''}
+      <button class="btn btn-secondary btn-xs" onclick="App.triggerEmailHR('${job.id}')">Email HR</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.triggerApplyWeb('${job.id}')">Apply Web</button>
     </div>
   </div>`;
 }
@@ -617,18 +617,109 @@ const App = {
     buildAccordion(containerId, items, fieldMap[type], callbackMap[type]);
   },
 
+  _collectAccordionData(containerId) {
+    const container = $(containerId);
+    if (!container) return [];
+    const itemsMap = {};
+    container.querySelectorAll('[data-acc]').forEach(el => {
+      const idx = el.getAttribute('data-idx');
+      const field = el.getAttribute('data-field');
+      if (!itemsMap[idx]) itemsMap[idx] = {};
+      itemsMap[idx][field] = el.value;
+    });
+    return Object.values(itemsMap);
+  },
+
+  addEducationEntry() {
+    if (!State.profileData.education) State.profileData.education = [];
+    State.profileData.education.push({ institution: '', degree: '', field: '', start_year: '', end_year: '', gpa: '' });
+    App._renderAccordion('education-list', State.profileData.education, 'education');
+  },
+  removeEducation(idx) {
+    if (State.profileData.education) {
+      State.profileData.education.splice(idx, 1);
+      App._renderAccordion('education-list', State.profileData.education, 'education');
+    }
+  },
+  addExperienceEntry() {
+    if (!State.profileData.experience) State.profileData.experience = [];
+    State.profileData.experience.push({ company: '', role: '', location: '', start_date: '', end_date: '', description: '' });
+    App._renderAccordion('experience-list', State.profileData.experience, 'experience');
+  },
+  removeExperience(idx) {
+    if (State.profileData.experience) {
+      State.profileData.experience.splice(idx, 1);
+      App._renderAccordion('experience-list', State.profileData.experience, 'experience');
+    }
+  },
+  addProjectEntry() {
+    if (!State.profileData.projects) State.profileData.projects = [];
+    State.profileData.projects.push({ name: '', url: '', tech_stack: '', description: '' });
+    App._renderAccordion('projects-list', State.profileData.projects, 'projects');
+  },
+  removeProject(idx) {
+    if (State.profileData.projects) {
+      State.profileData.projects.splice(idx, 1);
+      App._renderAccordion('projects-list', State.profileData.projects, 'projects');
+    }
+  },
+  addCertEntry() {
+    if (!State.profileData.certifications) State.profileData.certifications = [];
+    State.profileData.certifications.push({ name: '', issuer: '', issued_date: '', url: '' });
+    App._renderAccordion('certs-list', State.profileData.certifications, 'certifications');
+  },
+  removeCert(idx) {
+    if (State.profileData.certifications) {
+      State.profileData.certifications.splice(idx, 1);
+      App._renderAccordion('certs-list', State.profileData.certifications, 'certifications');
+    }
+  },
+  removeTag(dataKey, idx) {
+    if (State.tagsData && State.tagsData[dataKey]) {
+      State.tagsData[dataKey].splice(idx, 1);
+      initTagsInput(`tags-${dataKey}`, `tags-${dataKey}-input`, dataKey);
+    }
+  },
+
   async _loadProfileResumesDropdown() {
     try {
       const resumes = await API.get('/api/resumes');
       const list = Array.isArray(resumes) ? resumes : (resumes.resumes || []);
       const docxList = list.filter(r => (r.filename || r.name || '').toLowerCase().endsWith('.docx'));
+      const optionsList = docxList.length ? docxList : list;
       const sel = $('profile-template-select');
       if (!sel) return;
       const current = sel.value || (State.profileData && (State.profileData.original_resume_id || State.profileData.template_resume_id)) || '';
       sel.innerHTML = '<option value="">— select uploaded DOCX —</option>' +
-        docxList.map(r => `<option value="${r.id}">${esc(r.filename || r.name)}</option>`).join('');
-      if (current) sel.value = current;
+        optionsList.map(r => `<option value="${r.id}">${esc(r.filename || r.name)}</option>`).join('');
+      if (current) {
+        const hasOpt = Array.from(sel.options).some(o => o.value === String(current));
+        if (hasOpt) sel.value = String(current);
+      }
     } catch { /* ignore */ }
+  },
+
+  async saveProfileTemplate() {
+    const sel = $('profile-template-select');
+    const templateId = sel?.value || '';
+    setMsg('profile-save-template-msg', 'Saving...', '');
+    try {
+      await API.put('/api/candidate', {
+        ...(State.profileData || {}),
+        original_resume_id: templateId,
+        template_resume_id: templateId,
+      });
+      if (State.profileData) {
+        State.profileData.original_resume_id = templateId;
+        State.profileData.template_resume_id = templateId;
+      }
+      setMsg('profile-save-template-msg', '✓ Saved!', 'success');
+      Toast.success('Resume template saved!');
+      setTimeout(() => setMsg('profile-save-template-msg', ''), 3000);
+    } catch(e) {
+      setMsg('profile-save-template-msg', '✗ ' + e.message, 'error');
+      Toast.error('Failed to save template: ' + e.message);
+    }
   },
 
   async saveProfile() {
@@ -654,10 +745,10 @@ const App = {
       technical_skills:      State.tagsData.technical,
       soft_skills:           State.tagsData.soft,
       languages:             State.tagsData.languages,
-      education:             State.profileData.education     || [],
-      experience:            State.profileData.experience    || [],
-      projects:              State.profileData.projects      || [],
-      certifications:        State.profileData.certifications|| [],
+      education:             App._collectAccordionData('education-list'),
+      experience:            App._collectAccordionData('experience-list'),
+      projects:              App._collectAccordionData('projects-list'),
+      certifications:        App._collectAccordionData('certs-list'),
       original_resume_id:    templateId,
       template_resume_id:    templateId,
       personal: {
@@ -900,6 +991,32 @@ const App = {
     } catch(e) {
       setMsg('followup-send-msg', e.message, 'error');
     }
+  },
+
+  /* ── TRIGGER HELPERS (Job Card Buttons) ───────────────── */
+  async triggerAnalyzeJD(jobId) {
+    await this.openJobDetail(jobId);
+    await this.analyzeJD();
+  },
+  async triggerFindContacts(jobId) {
+    await this.openJobDetail(jobId);
+    await this.findContacts();
+  },
+  async triggerGenerateResume(jobId) {
+    await this.openJobDetail(jobId);
+    await this.generateResume();
+  },
+  async triggerPreviewPDF(jobId) {
+    await this.openJobDetail(jobId);
+    this.previewResumePDF();
+  },
+  async triggerEmailHR(jobId) {
+    await this.openJobDetail(jobId);
+    this.focusEmailHR();
+  },
+  async triggerApplyWeb(jobId) {
+    await this.openJobDetail(jobId);
+    this.startWebsiteApply();
   },
 
   /* ═══════════════════════════════════════════════════════
@@ -1649,4 +1766,5 @@ const App = {
 /* ─────────────────────────────────────────────────────────
    BOOT
    ───────────────────────────────────────────────────────── */
+window.App = App;
 document.addEventListener('DOMContentLoaded', () => App.init());
