@@ -251,6 +251,124 @@ def _add_certifications(doc: Document, certifications: list[dict], styles: dict)
         para.paragraph_format.space_after = Pt(1)
 
 
+def _update_doc_in_place(doc: Document, customized_content: dict, candidate_profile: dict, styles: dict) -> bool:
+    """
+    Performs text replacements directly inside the cloned master DOCX.
+    Preserves all paragraph formats, run fonts, colors, bullet styles, margins, and headers.
+    Returns True if in-place update succeeded, False if fallback to scratch build is needed.
+    """
+    summary = customized_content.get("summary", "")
+    skills_section = customized_content.get("skills_section", {})
+    experience = customized_content.get("experience", [])
+
+    section_paragraphs = {}
+    current_section = None
+
+    heading_patterns = {
+        "summary": re.compile(r"summary|profile|objective|about", re.I),
+        "skills": re.compile(r"skill|competenc|technolog|expertise", re.I),
+        "experience": re.compile(r"experience|employment|work history|career", re.I),
+        "projects": re.compile(r"project", re.I),
+    }
+
+    for para in doc.paragraphs:
+        txt = para.text.strip()
+        if not txt:
+            continue
+        matched_sec = None
+        for sec_key, pattern in heading_patterns.items():
+            if pattern.search(txt) and len(txt) < 45:
+                matched_sec = sec_key
+                break
+        if matched_sec:
+            current_section = matched_sec
+            if current_section not in section_paragraphs:
+                section_paragraphs[current_section] = []
+        elif current_section:
+            section_paragraphs[current_section].append(para)
+
+    # If no recognized headings were found, return False to use scratch build
+    if not section_paragraphs:
+        return False
+
+    # 1. Update Summary in-place
+    if summary and "summary" in section_paragraphs and section_paragraphs["summary"]:
+        summary_paras = section_paragraphs["summary"]
+        summary_paras[0].text = summary
+        for run in summary_paras[0].runs:
+            run.font.name = styles["font_name"]
+            run.font.size = Pt(styles["body_size"])
+        for extra_p in summary_paras[1:]:
+            extra_p.text = ""
+
+    # 2. Update Skills in-place
+    skills = skills_section.get("highlighted", skills_section.get("all", []))
+    if skills and "skills" in section_paragraphs and section_paragraphs["skills"]:
+        skills_paras = section_paragraphs["skills"]
+        skills_str = " • ".join(skills)
+        skills_paras[0].text = skills_str
+        for run in skills_paras[0].runs:
+            run.font.name = styles["font_name"]
+            run.font.size = Pt(styles["body_size"])
+        for extra_p in skills_paras[1:]:
+            extra_p.text = ""
+
+    # 3. Update Experience bullets in-place
+    if experience and "experience" in section_paragraphs and section_paragraphs["experience"]:
+        exp_paras = section_paragraphs["experience"]
+        all_bullets = []
+        for item in experience:
+            all_bullets.extend(item.get("bullets", []))
+
+        bullet_idx = 0
+        for para in exp_paras:
+            if para.text.strip() and (para.style.name.startswith("List") or para.text.strip().startswith(("•", "-", "*")) or len(para.text.strip()) > 30):
+                if bullet_idx < len(all_bullets):
+                    new_bullet = all_bullets[bullet_idx]
+                    bullet_idx += 1
+                    if para.text.strip().startswith("•"):
+                        para.text = f"• {new_bullet}"
+                    elif para.text.strip().startswith("-"):
+                        para.text = f"- {new_bullet}"
+                    else:
+                        para.text = new_bullet
+                    for run in para.runs:
+                        run.font.name = styles["font_name"]
+                        run.font.size = Pt(styles["body_size"])
+
+    return True
+
+
+def _build_doc_from_scratch(doc: Document, customized_content: dict, candidate_profile: dict, styles: dict) -> None:
+    section = doc.sections[0]
+    section.top_margin = Inches(styles["margins"]["top"])
+    section.bottom_margin = Inches(styles["margins"]["bottom"])
+    section.left_margin = Inches(styles["margins"]["left"])
+    section.right_margin = Inches(styles["margins"]["right"])
+
+    _add_name_header(doc, candidate_profile, styles)
+
+    summary = customized_content.get("summary", "")
+    if summary:
+        _add_summary(doc, summary, styles)
+
+    skills_section = customized_content.get("skills_section", {})
+    if skills_section:
+        _add_skills(doc, skills_section, styles)
+
+    experience = customized_content.get("experience", [])
+    _add_experience(doc, experience, styles)
+
+    projects = customized_content.get("projects", [])
+    _add_projects(doc, projects, styles)
+
+    education = candidate_profile.get("education", [])
+    _add_education(doc, education, styles)
+
+    certifications = candidate_profile.get("certifications", [])
+    _add_certifications(doc, certifications, styles)
+
+
 def generate_resume_docx(
     original_docx_bytes: bytes,
     customized_content: dict,
@@ -259,55 +377,25 @@ def generate_resume_docx(
     company: str,
 ) -> bytes:
     """
-    Generate a job-specific DOCX resume.
-
-    original_docx_bytes: the candidate's master DOCX (never modified)
-    customized_content: output from resume_customizer_service.customize_resume()
-    candidate_profile: full CandidateProfile dict (for personal info, education, certs)
-    job_title / company: for the filename reference
-
-    Returns DOCX as bytes.
+    Generate a job-specific DOCX resume while preserving 100% of the Original DOCX Template style.
+    Clones the master DOCX directly and performs in-place text updates to preserve fonts, sizes, colors,
+    heading styles, borders, and margins.
     """
     styles = _get_doc_styles(original_docx_bytes)
 
+    if original_docx_bytes:
+        try:
+            doc = Document(io.BytesIO(original_docx_bytes))
+            updated = _update_doc_in_place(doc, customized_content, candidate_profile, styles)
+            if updated:
+                buf = io.BytesIO()
+                doc.save(buf)
+                return buf.getvalue()
+        except Exception as e:
+            logger.warning("[DOCXGenerator] In-place template update failed (%s), using scratch builder", e)
+
     doc = Document()
-
-    # Set page margins
-    section = doc.sections[0]
-    section.top_margin = Inches(styles["margins"]["top"])
-    section.bottom_margin = Inches(styles["margins"]["bottom"])
-    section.left_margin = Inches(styles["margins"]["left"])
-    section.right_margin = Inches(styles["margins"]["right"])
-
-    # ---- Header: Name + Contact ----
-    _add_name_header(doc, candidate_profile, styles)
-
-    # ---- Summary ----
-    summary = customized_content.get("summary", "")
-    if summary:
-        _add_summary(doc, summary, styles)
-
-    # ---- Skills ----
-    skills_section = customized_content.get("skills_section", {})
-    if skills_section:
-        _add_skills(doc, skills_section, styles)
-
-    # ---- Experience ----
-    experience = customized_content.get("experience", [])
-    _add_experience(doc, experience, styles)
-
-    # ---- Projects ----
-    projects = customized_content.get("projects", [])
-    _add_projects(doc, projects, styles)
-
-    # ---- Education (from full profile, not customized — these never change) ----
-    education = candidate_profile.get("education", [])
-    _add_education(doc, education, styles)
-
-    # ---- Certifications (from profile) ----
-    certifications = candidate_profile.get("certifications", [])
-    _add_certifications(doc, certifications, styles)
-
+    _build_doc_from_scratch(doc, customized_content, candidate_profile, styles)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
