@@ -6,6 +6,7 @@ from app.services.job_sources import SOURCE_FETCHERS, UNIMPLEMENTED_SOURCES
 router = APIRouter(prefix="/api/jobsearch", tags=["job search"])
 
 
+@router.post("")
 @router.post("/run")
 async def run_search():
     """Manually trigger a job search across the sources set in your Job Search Config."""

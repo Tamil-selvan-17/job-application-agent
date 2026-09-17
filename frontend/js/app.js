@@ -878,20 +878,23 @@ const App = {
     setMsg('search-msg', 'Searching...', '');
     $('run-search-btn').disabled = true;
     try {
-      const d = await API.post('/api/jobs', { action: 'search' });
-      const msg = d.message || `Found ${d.new_jobs || 0} new jobs.`;
+      const d = await API.post('/api/jobsearch/run', {});
+      const count = d.saved ?? d.new_jobs ?? d.total_fetched ?? 0;
+      const msg = d.message || `Search complete! Found ${count} new job(s).`;
       setMsg('search-msg', msg, 'success');
       Toast.success(msg);
       App.loadJobs();
     } catch(e) {
-      // Some implementations trigger search via a different endpoint
       try {
-        const d = await API.get('/api/jobs?action=search');
-        setMsg('search-msg', 'Search complete.', 'success');
+        const d = await API.post('/api/jobsearch', {});
+        const count = d.saved ?? d.new_jobs ?? d.total_fetched ?? 0;
+        const msg = d.message || `Search complete! Found ${count} new job(s).`;
+        setMsg('search-msg', msg, 'success');
+        Toast.success(msg);
         App.loadJobs();
-      } catch {
-        setMsg('search-msg', e.message, 'error');
-        Toast.error('Search failed: ' + e.message);
+      } catch(e2) {
+        setMsg('search-msg', '✗ ' + e2.message, 'error');
+        Toast.error('Search failed: ' + e2.message);
       }
     } finally {
       $('run-search-btn').disabled = false;
