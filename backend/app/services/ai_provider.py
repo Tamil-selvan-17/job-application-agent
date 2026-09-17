@@ -72,6 +72,21 @@ class OllamaProvider(AIProvider):
             return {"ok": False, "provider": self.name, "error": str(e)}
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Fallback Gemini models to try in sequence if the configured model is unavailable (503/429/404/500)
+FALLBACK_GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-pro",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+]
+
+
 class GeminiProvider(AIProvider):
     name = "gemini"
 
@@ -79,16 +94,11 @@ class GeminiProvider(AIProvider):
         self.api_key = api_key
         self.model = model
 
-    async def generate(self, prompt: str, system: str | None = None) -> str:
-        if not self.api_key:
-            raise ValueError(
-                "Gemini API key is not set. Add it in Settings before using Gemini."
-            )
+    async def _try_generate_with_model(self, model_name: str, full_prompt: str) -> str:
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:generateContent?key={self.api_key}"
+            f"{model_name}:generateContent?key={self.api_key}"
         )
-        full_prompt = f"{system}\n\n{prompt}" if system else prompt
         body = {"contents": [{"parts": [{"text": full_prompt}]}]}
 
         last_error: Exception | None = None
@@ -111,11 +121,52 @@ class GeminiProvider(AIProvider):
                 if e.response.status_code in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES - 1:
                     await asyncio.sleep(GEMINI_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
                     continue
-                raise
+                raise e
 
         if last_error:
             raise last_error
-        raise RuntimeError("Gemini request failed after retries")
+        raise RuntimeError(f"Gemini request failed for model {model_name}")
+
+    async def generate(self, prompt: str, system: str | None = None) -> str:
+        if not self.api_key:
+            raise ValueError(
+                "Gemini API key is not set. Add it in Settings before using Gemini."
+            )
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+
+        # Primary model first, followed by fallbacks
+        models_to_try = [self.model]
+        for m in FALLBACK_GEMINI_MODELS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
+        last_exc: Exception | None = None
+        for m in models_to_try:
+            try:
+                result = await self._try_generate_with_model(m, full_prompt)
+                if m != self.model:
+                    logger.warning(
+                        "[GeminiProvider] Primary model '%s' failed, successfully fell back to '%s'",
+                        self.model, m,
+                    )
+                return result
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                if e.response.status_code in (503, 429, 404, 500, 502, 504):
+                    logger.warning(
+                        "[GeminiProvider] Model '%s' returned HTTP %d, trying fallback...",
+                        m, e.response.status_code,
+                    )
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                logger.warning("[GeminiProvider] Model '%s' failed: %s, trying fallback...", m, e)
+                continue
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("All Gemini models failed")
 
     async def health_check(self) -> dict:
         if not self.api_key:

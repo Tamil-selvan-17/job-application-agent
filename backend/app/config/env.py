@@ -22,7 +22,7 @@ class EnvSettings(BaseSettings):
     ollama_model: str = "llama3.1"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
 
     # App
     app_env: str = "development"

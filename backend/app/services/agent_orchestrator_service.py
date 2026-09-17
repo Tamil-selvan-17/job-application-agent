@@ -304,12 +304,10 @@ def _build_personalized_email_html(job: dict, config: dict, profile: dict, jd_an
     company = job.get("company", "your company")
     experience_years = career.get("total_experience", "") or str(config.get("experience", ""))
 
-    # Use real matching technologies from JD hooks
-    hooks = jd_analysis.get("hooks", [])
-    technologies = jd_analysis.get("technologies", [])
-    candidate_skills = profile.get("skills", []) or config.get("skills", [])
+    hooks = [h for h in (jd_analysis.get("hooks") or []) if isinstance(h, str)]
+    technologies = [t for t in (jd_analysis.get("technologies") or []) if isinstance(t, str)]
+    candidate_skills = [s for s in (profile.get("skills") or config.get("skills") or []) if isinstance(s, str)]
 
-    # Find genuinely matching skills
     matching_skills = [s for s in candidate_skills if any(
         s.lower() in t.lower() or t.lower() in s.lower()
         for t in (hooks + technologies)
@@ -320,12 +318,11 @@ def _build_personalized_email_html(job: dict, config: dict, profile: dict, jd_an
 
     skills_phrase = ", ".join(matching_skills) if matching_skills else "relevant technologies"
 
-    # Find a specific project or experience to reference
-    experience_list = profile.get("experience", [])
+    experience_list = profile.get("experience") or []
     project_ref = ""
-    if experience_list:
-        recent = experience_list[0]
-        recent_techs = recent.get("technologies", [])
+    if isinstance(experience_list, list) and len(experience_list) > 0:
+        recent = experience_list[0] if isinstance(experience_list[0], dict) else {}
+        recent_techs = [t for t in (recent.get("technologies") or []) if isinstance(t, str)]
         matching_recent = [t for t in recent_techs if any(
             t.lower() in h.lower() or h.lower() in t.lower() for h in hooks
         )]

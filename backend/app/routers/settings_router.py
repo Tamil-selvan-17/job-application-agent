@@ -11,9 +11,11 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # available to every API key yet, so the 2.5 series is listed first as
 # the safest default set - all confirmed stable and generally available.
 GEMINI_MODEL_CHOICES = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
     "gemini-flash-lite-latest",
     "gemini-flash-latest",
 ]
