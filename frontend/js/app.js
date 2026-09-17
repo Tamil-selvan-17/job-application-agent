@@ -1354,35 +1354,50 @@ const App = {
   /* ── WEBSITE APPLY ─────────────────────────────────────── */
   async startWebsiteApply() {
     if (!State.currentJobId) return;
+    const job = State.currentJob || {};
+    const url = job.url || job.application_url || '';
+
     hide('jdp-website-placeholder');
     show('jdp-automation-container');
     hide('jdp-captcha-alert');
-    hide('jdp-confirm-alert');
+    show('jdp-confirm-alert');
     hide('jdp-screenshot-wrap');
     hide('jdp-fields-preview-wrap');
-    setText('jdp-auto-status-text', 'Opening browser...');
-    $('jdp-auto-status-header').querySelector('.spinner')?.classList.remove('d-none');
+    setText('jdp-auto-status-text', 'Application link opened in new tab. Use Candidate Assist below to copy field details.');
+    $('jdp-auto-status-header').querySelector('.spinner')?.classList.add('d-none');
+
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      window.open(url, '_blank');
+      Toast.success('Job link opened in new tab!');
+    }
 
     try {
       await API.post(`/api/jobs/${State.currentJobId}/apply-website`, {});
       startAutomationPoll(State.currentJobId);
     } catch(e) {
-      setText('jdp-auto-status-text', 'Failed: ' + e.message);
-      Toast.error('Browser automation failed: ' + e.message);
+      console.warn('Backend automation notice:', e.message);
     }
+  },
+
+  copyFieldValue(val) {
+    if (!val) return;
+    navigator.clipboard.writeText(val);
+    Toast.success('Copied to clipboard!');
   },
 
   async pollAutomationStatus(jobId) {
     try {
       const d = await API.get(`/api/jobs/${jobId}/apply-website/status`);
       const status = (d.status || '').toUpperCase();
-      setText('jdp-auto-status-text', d.message || status);
+      if (status && status !== 'INITIALIZING') {
+        setText('jdp-auto-status-text', d.message || status);
+      }
 
       if (status === 'CAPTCHA_REQUIRED') {
         show('jdp-captcha-alert');
         hide('jdp-confirm-alert');
         stopAutomationPoll();
-      } else if (status === 'AWAITING_CONFIRMATION') {
+      } else if (status === 'AWAITING_CONFIRMATION' || status === 'ASSISTED_APPLY') {
         hide('jdp-captcha-alert');
         show('jdp-confirm-alert');
         stopAutomationPoll();
@@ -1395,7 +1410,7 @@ const App = {
         App.loadJobs();
       } else if (status === 'ERROR' || status === 'FAILED') {
         stopAutomationPoll();
-        Toast.error('Automation error: ' + (d.message || 'Unknown error'));
+        show('jdp-confirm-alert');
       }
 
       // Screenshot
@@ -1404,14 +1419,17 @@ const App = {
         $('jdp-screenshot').src = d.screenshot.startsWith('data:') ? d.screenshot : `data:image/png;base64,${d.screenshot}`;
       }
 
-      // Form fields preview
-      if (d.fields && d.fields.length) {
+      // Form fields preview / candidate assist
+      const fields = (d.form_preview && d.form_preview.length) ? d.form_preview : (d.fields || []);
+      if (fields && fields.length) {
         show('jdp-fields-preview-wrap');
-        $('jdp-fields-tbody').innerHTML = d.fields.map(f => `
+        $('jdp-fields-tbody').innerHTML = fields.map(f => `
           <tr>
-            <td>${esc(f.name || f.field)}</td>
-            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.value || '—')}</td>
-            <td class="field-status-${(f.status||'').toLowerCase()}">${esc(f.status || '—')}</td>
+            <td><b>${esc(f.name || f.field)}</b></td>
+            <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.value || '—')}</td>
+            <td>
+              ${f.value ? `<button class="btn btn-secondary btn-xs" onclick="App.copyFieldValue('${esc(f.value.replace(/'/g, "\\'"))}')">Copy</button>` : '<span class="text-muted font-xs">—</span>'}
+            </td>
           </tr>`).join('');
       }
     } catch(e) {

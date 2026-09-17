@@ -173,18 +173,24 @@ class BrowserAgent:
         from webdriver_manager.chrome import ChromeDriverManager
 
         options = Options()
-        # Visible browser — user can monitor and intervene
-        options.add_argument("--start-maximized")
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
-        # Mask WebDriver detection
-        self.driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+        try:
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=options)
+            self.driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+        except Exception as e:
+            logger.warning("[BrowserAgent] Could not initialize Chrome driver: %s", e)
+            self.driver = None
 
     def _get_field_signals(self, element) -> list[str]:
         """Extract all textual signals from a form element."""
@@ -274,6 +280,11 @@ class BrowserAgent:
 
         try:
             self._init_driver()
+            if not self.driver:
+                self.state.status = "ASSISTED_APPLY"
+                self.state.current_step = "Application link opened in new tab. Candidate Assist panel ready."
+                self.state.form_preview = _build_profile_form_preview(candidate_profile)
+                return self.state
             self.state.current_step = "Opening application URL"
             self.driver.get(url)
             time.sleep(3)
@@ -498,3 +509,20 @@ def close_session(job_id: str) -> None:
     session = _active_sessions.get(job_id)
     if session:
         session.close()
+
+
+def _build_profile_form_preview(candidate_profile: dict) -> list[dict]:
+    personal = candidate_profile.get("personal", {})
+    career = candidate_profile.get("career", {})
+    skills = candidate_profile.get("skills", [])
+    full_name = personal.get("full_name") or f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip()
+    return [
+        {"name": "Full Name", "value": full_name, "status": "ready"},
+        {"name": "Email", "value": personal.get("email", ""), "status": "ready"},
+        {"name": "Phone", "value": personal.get("phone", ""), "status": "ready"},
+        {"name": "Location", "value": personal.get("location", "") or personal.get("city", ""), "status": "ready"},
+        {"name": "LinkedIn", "value": personal.get("linkedin", ""), "status": "ready"},
+        {"name": "GitHub / Portfolio", "value": personal.get("github", "") or personal.get("website", ""), "status": "ready"},
+        {"name": "Years of Experience", "value": str(career.get("total_experience", "") or candidate_profile.get("years_experience", "")), "status": "ready"},
+        {"name": "Primary Skills", "value": ", ".join(skills[:8]) if isinstance(skills, list) else str(skills), "status": "ready"},
+    ]
