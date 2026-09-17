@@ -79,6 +79,15 @@ async def upload_resume(file: UploadFile, is_default: bool = False) -> dict:
 
     if is_default:
         await set_default_resume(resume_id)
+    elif ext.lstrip(".") == "docx":
+        # Auto-link docx resume if candidate profile doesn't have one set yet
+        try:
+            from app.services import candidate_service
+            prof = await candidate_service.get_profile()
+            if not prof.get("original_resume_id"):
+                await candidate_service.sync_original_resume(resume_id)
+        except Exception:
+            pass
 
     return await get_resume(resume_id)
 
@@ -121,6 +130,14 @@ async def add_version(resume_id: str, file: UploadFile) -> dict:
             }
         },
     )
+
+    if ext.lstrip(".") == "docx":
+        try:
+            from app.services import candidate_service
+            await candidate_service.sync_original_resume(resume_id)
+        except Exception:
+            pass
+
     return await get_resume(resume_id)
 
 
@@ -165,6 +182,15 @@ async def set_default_resume(resume_id: str) -> dict:
     # Keep the Job Search Config JSON in sync - "default_resume" there is
     # derived from this selection, not meant to be hand-typed.
     await config_service.patch_config({"default_resume": resume["filename"]})
+
+    # If the default resume is a DOCX template, link it as original_resume_id in candidate profile
+    if resume.get("file_type") == "docx":
+        try:
+            from app.services import candidate_service
+            await candidate_service.sync_original_resume(resume_id)
+        except Exception:
+            pass
+
     return resume
 
 
