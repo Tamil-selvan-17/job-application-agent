@@ -87,6 +87,12 @@ class TestRouters(unittest.TestCase):
         response = client.post("/api/jobs/job_101/apply-email-personalized", json=payload)
         self.assertEqual(response.status_code, 200)
 
+    @patch("app.services.agent_orchestrator_service.start_website_application", new_callable=AsyncMock)
+    def test_apply_website_endpoint(self, mock_web_app):
+        mock_web_app.return_value = {"status": "STARTING", "message": "Browser session initialized"}
+        response = client.post("/api/jobs/job_101/apply-website")
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

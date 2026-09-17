@@ -441,7 +441,7 @@ async def start_website_application(job_id: str, generated_resume_id: str | None
     if not resume_id:
         raise ValueError("No generated resume found. Generate a resume first.")
 
-    _, pdf_bytes, _, pdf_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
+    _, pdf_bytes, _, pdf_filename, *rest = await application_tracker_service.get_generated_resume_bytes(resume_id)
 
     # Resolve the actual application URL (follow redirects)
     from app.services.job_service import resolve_apply_url
