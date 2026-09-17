@@ -80,6 +80,13 @@ class TestRouters(unittest.TestCase):
         response = client.get("/api/applications/stats")
         self.assertEqual(response.status_code, 200)
 
+    @patch("app.services.agent_orchestrator_service.run_email_application", new_callable=AsyncMock)
+    def test_apply_email_personalized_endpoint(self, mock_email_app):
+        mock_email_app.return_value = {"sent": True, "recipient": "hr@test.com"}
+        payload = {"hr_email": "hr@test.com"}
+        response = client.post("/api/jobs/job_101/apply-email-personalized", json=payload)
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
