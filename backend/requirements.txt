@@ -24,3 +24,6 @@ beautifulsoup4>=4.12.3
 lxml>=5.2.1
 # COM initialization for docx2pdf thread-pool calls on Windows
 pywin32>=306; sys_platform == 'win32'
+# Pure-Python DOCX -> PDF conversion fallback for Linux/Render without LibreOffice
+reportlab>=4.0.0
+
