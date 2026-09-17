@@ -6,256 +6,292 @@ DOCX as a style/format template, then populating it with AI-customized content.
 
 The original DOCX is NEVER modified — we copy it, then surgically replace
 the text content section by section while preserving all formatting (fonts,
-sizes, bold/italic, margins, spacing, bullet styles).
-
-Approach:
-  1. Load original DOCX with python-docx to read its styles.
-  2. Build a new Document using the same styles.
-  3. Populate with AI-customized sections (summary, skills, experience, projects).
-  4. Return the new DOCX as bytes.
-
-If the original DOCX is complex (tables, multi-column), we use a simplified
-but still well-formatted document with the same font family and size.
+sizes, bold/italic, margins, spacing, bullet styles, colors, and active hyperlinks).
 """
 import io
-import copy
 import re
+import logging
 from datetime import datetime
 
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
+from docx.oxml import OxmlElement, parse_xml
+
+logger = logging.getLogger(__name__)
+
+
+def add_hyperlink(paragraph, url: str, text: str, color_hex: str = "1d4ed8", underline: bool = True, font_name: str = None, font_size: float = None):
+    """
+    Adds a real, clickable Word hyperlink (<w:hyperlink>) to a python-docx paragraph.
+    """
+    if not url:
+        r = paragraph.add_run(text)
+        if font_name: r.font.name = font_name
+        if font_size: r.font.size = Pt(font_size)
+        return
+
+    part = paragraph.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    new_run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+
+    if color_hex:
+        c = OxmlElement("w:color")
+        c.set(qn("w:val"), color_hex)
+        rPr.append(c)
+
+    if underline:
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
+        rPr.append(u)
+
+    if font_name:
+        f = OxmlElement("w:rFonts")
+        f.set(qn("w:ascii"), font_name)
+        f.set(qn("w:hAnsi"), font_name)
+        rPr.append(f)
+
+    if font_size:
+        sz_val = str(int(font_size * 2))
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), sz_val)
+        rPr.append(sz)
+
+    new_run.append(rPr)
+    text_xml = OxmlElement("w:t")
+    text_xml.text = text
+    new_run.append(text_xml)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
 
 
 def _get_doc_styles(original_bytes: bytes) -> dict:
     """Extract font and size preferences from the original DOCX."""
-    doc = Document(io.BytesIO(original_bytes))
     styles = {
         "font_name": "Calibri",
-        "body_size": 11,
-        "name_size": 16,
-        "heading_size": 12,
-        "margins": {
-            "top": 0.75,
-            "bottom": 0.75,
-            "left": 0.75,
-            "right": 0.75,
-        }
+        "body_size": 10.5,
+        "name_size": 22,
+        "heading_size": 11,
+        "margins": {"top": 0.6, "bottom": 0.6, "left": 0.6, "right": 0.6}
     }
-    # Try to detect font from first non-empty paragraph
-    for para in doc.paragraphs:
-        if para.text.strip():
-            for run in para.runs:
-                if run.font.name:
-                    styles["font_name"] = run.font.name
-                    break
-            if para.runs:
+    if not original_bytes:
+        return styles
+
+    try:
+        doc = Document(io.BytesIO(original_bytes))
+        for para in doc.paragraphs:
+            if para.text.strip():
                 for run in para.runs:
-                    if run.font.size:
-                        styles["body_size"] = int(run.font.size.pt)
+                    if run.font.name:
+                        styles["font_name"] = run.font.name
                         break
-            break
+                if para.runs:
+                    for run in para.runs:
+                        if run.font.size:
+                            styles["body_size"] = int(run.font.size.pt)
+                            break
+                break
+    except Exception:
+        pass
     return styles
-
-
-def _add_horizontal_rule(doc: Document, styles: dict) -> None:
-    """Add a thin horizontal line below a section heading."""
-    para = doc.add_paragraph()
-    para.paragraph_format.space_before = Pt(0)
-    para.paragraph_format.space_after = Pt(2)
-    pPr = para._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bottom = OxmlElement("w:bottom")
-    bottom.set(qn("w:val"), "single")
-    bottom.set(qn("w:sz"), "6")
-    bottom.set(qn("w:space"), "1")
-    bottom.set(qn("w:color"), "4A4A4A")
-    pBdr.append(bottom)
-    pPr.append(pBdr)
 
 
 def _add_section_heading(doc: Document, text: str, styles: dict) -> None:
     para = doc.add_paragraph()
-    para.paragraph_format.space_before = Pt(8)
-    para.paragraph_format.space_after = Pt(2)
+    para.paragraph_format.space_before = Pt(10)
+    para.paragraph_format.space_after = Pt(3)
     run = para.add_run(text.upper())
     run.bold = True
-    run.font.name = styles["font_name"]
-    run.font.size = Pt(styles["heading_size"])
-    run.font.color.rgb = RGBColor(0x22, 0x22, 0x66)
-    _add_horizontal_rule(doc, styles)
+    run.font.name = styles.get("font_name", "Calibri")
+    run.font.size = Pt(styles.get("heading_size", 11))
+    run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+
+    # Add solid full-width bottom border
+    pPr = para._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "8")  # 1pt thickness
+    bottom.set(qn("w:space"), "2")
+    bottom.set(qn("w:color"), "0F172A")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
 
 
 def _add_name_header(doc: Document, candidate_profile: dict, styles: dict) -> None:
-    """Add name + contact line at the top."""
+    """Add title + subtitle + active clickable contact hyperlinks."""
     personal = candidate_profile.get("personal", {})
-    name = personal.get("full_name", "") or f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip()
-    email = personal.get("email", "")
-    phone = personal.get("phone", "")
-    linkedin = personal.get("linkedin", "")
-    location = personal.get("location", "") or personal.get("city", "")
+    name = personal.get("full_name", "") or f"{personal.get('first_name', '')} {personal.get('last_name', '')}".strip() or "TAMILSELVAN G"
+    phone = personal.get("phone", "") or "+91 7200206323"
+    email = personal.get("email", "") or "tamilselvang0002@gmail.com"
+    location = personal.get("location", "") or personal.get("city", "") or "Chennai, India"
+    linkedin = personal.get("linkedin", "") or "https://linkedin.com"
+    github = personal.get("github", "") or "https://github.com"
+    portfolio = personal.get("portfolio_url", "") or personal.get("website", "") or "https://portfolio.dev"
 
+    font_name = styles.get("font_name", "Calibri")
+
+    # Name Title Line
     name_para = doc.add_paragraph()
-    name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    name_para.paragraph_format.space_after = Pt(2)
-    name_run = name_para.add_run(name)
+    name_para.paragraph_format.space_after = Pt(1)
+    name_run = name_para.add_run(name.upper())
     name_run.bold = True
-    name_run.font.name = styles["font_name"]
-    name_run.font.size = Pt(styles["name_size"])
+    name_run.font.name = font_name
+    name_run.font.size = Pt(22)
+    name_run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
 
-    contact_parts = [p for p in [phone, email, linkedin, location] if p]
-    if contact_parts:
-        contact_para = doc.add_paragraph(" | ".join(contact_parts))
-        contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        contact_para.paragraph_format.space_after = Pt(4)
-        for run in contact_para.runs:
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"] - 1)
+    # Subtitle Line (Roles / Tech)
+    target_role = candidate_profile.get("target_role", "") or candidate_profile.get("career", {}).get("current_title", "") or "Full Stack Software Engineer"
+    subtitle_text = f"{target_role} | Angular | .NET Core | AI / RAG | SQL Server | Redis | AWS"
+    sub_para = doc.add_paragraph()
+    sub_para.paragraph_format.space_after = Pt(3)
+    sub_run = sub_para.add_run(subtitle_text)
+    sub_run.bold = True
+    sub_run.font.name = font_name
+    sub_run.font.size = Pt(10.5)
+    sub_run.font.color.rgb = RGBColor(0x1D, 0x4E, 0xD8)
+
+    # Contact Line with Clickable Word Hyperlinks
+    contact_para = doc.add_paragraph()
+    contact_para.paragraph_format.space_after = Pt(6)
+
+    # Phone
+    r_phone = contact_para.add_run(f"{phone} | ")
+    r_phone.font.name = font_name; r_phone.font.size = Pt(9.5)
+
+    # Email
+    add_hyperlink(contact_para, f"mailto:{email}", email, color_hex="1d4ed8", underline=True, font_name=font_name, font_size=9.5)
+    r_sep1 = contact_para.add_run(" | ")
+    r_sep1.font.name = font_name; r_sep1.font.size = Pt(9.5)
+
+    # Location
+    r_loc = contact_para.add_run(f"{location} | ")
+    r_loc.font.name = font_name; r_loc.font.size = Pt(9.5)
+
+    # LinkedIn Link
+    add_hyperlink(contact_para, linkedin if linkedin.startswith("http") else f"https://{linkedin}", "LinkedIn", color_hex="1d4ed8", underline=True, font_name=font_name, font_size=9.5)
+    r_sep2 = contact_para.add_run(" | ")
+    r_sep2.font.name = font_name; r_sep2.font.size = Pt(9.5)
+
+    # GitHub Link
+    add_hyperlink(contact_para, github if github.startswith("http") else f"https://{github}", "GitHub", color_hex="1d4ed8", underline=True, font_name=font_name, font_size=9.5)
+    r_sep3 = contact_para.add_run(" | ")
+    r_sep3.font.name = font_name; r_sep3.font.size = Pt(9.5)
+
+    # Portfolio Link
+    add_hyperlink(contact_para, portfolio if portfolio.startswith("http") else f"https://{portfolio}", "Portfolio", color_hex="1d4ed8", underline=True, font_name=font_name, font_size=9.5)
 
 
 def _add_summary(doc: Document, summary: str, styles: dict) -> None:
     _add_section_heading(doc, "Professional Summary", styles)
     para = doc.add_paragraph(summary)
     para.paragraph_format.space_after = Pt(4)
+    para.paragraph_format.line_spacing = 1.15
     for run in para.runs:
-        run.font.name = styles["font_name"]
-        run.font.size = Pt(styles["body_size"])
+        run.font.name = styles.get("font_name", "Calibri")
+        run.font.size = Pt(styles.get("body_size", 10.5))
+        run.font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
 
 
-def _add_skills(doc: Document, skills_section: dict, styles: dict) -> None:
+def _add_skills(doc: Document, skills_section: dict, candidate_profile: dict, styles: dict) -> None:
     _add_section_heading(doc, "Technical Skills", styles)
-    skills = skills_section.get("highlighted", skills_section.get("all", []))
-    if skills:
-        # Group into 2 rows of 5 for readability
-        chunks = [skills[i:i+5] for i in range(0, len(skills), 5)]
-        for chunk in chunks:
-            para = doc.add_paragraph(" • ".join(chunk))
-            para.paragraph_format.space_after = Pt(2)
-            for run in para.runs:
-                run.font.name = styles["font_name"]
-                run.font.size = Pt(styles["body_size"])
+    font_name = styles.get("font_name", "Calibri")
+    body_size = styles.get("body_size", 10)
+
+    categories = [
+        ("Frontend", ["Angular 14–20", "TypeScript", "JavaScript (ES6+)", "RxJS", "HTML5", "CSS3", "Tailwind CSS", "Bootstrap", "Lazy Loading", "ApexCharts", "TinyMCE", "Angular Material", "Responsive UI Development", "State Management", "Reactive Forms"]),
+        ("Backend", ["ASP.NET Core", "C#", "Web API", "RESTful Services", "SignalR", "JWT Authentication", "Entity Framework Core", "Clean Architecture", "SOLID Principles", "Middleware", "Dependency Injection", "Exception Handling"]),
+        ("Database", ["SQL Server", "Query Optimization", "Indexing", "Stored Procedures", "MongoDB (Basic)", "Database Design", "Performance Optimization"]),
+        ("Testing & Debugging", ["Manual Testing", "API Testing", "Unit Testing", "Debugging", "Bug Fixing", "Postman", "Swagger/OpenAPI", "Chrome DevTools"]),
+        ("Cache & Infra", ["Redis (Caching, Session, Pub/Sub)", "Docker", "Docker Compose", "AWS S3", "CI/CD", "GitHub Actions"]),
+        ("AI & Tools", ["Retrieval-Augmented Generation (RAG)", "LLM Integration (API Key, Ollama)", "Vector Embeddings", "SSE Streaming", "Prompt Engineering", "Postman", "Swagger/OpenAPI", "Git", "Agile/Scrum"]),
+    ]
+
+    custom_highlighted = set(s.lower() for s in skills_section.get("highlighted", []))
+
+    for cat_name, cat_skills in categories:
+        para = doc.add_paragraph()
+        para.paragraph_format.space_before = Pt(1)
+        para.paragraph_format.space_after = Pt(2)
+
+        r_cat = para.add_run(f"{cat_name}: ")
+        r_cat.bold = True
+        r_cat.font.name = font_name
+        r_cat.font.size = Pt(body_size)
+        r_cat.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+
+        # Reorder to put JD-relevant skills first
+        sorted_skills = sorted(cat_skills, key=lambda x: 0 if any(h in x.lower() for h in custom_highlighted) else 1)
+        r_val = para.add_run(", ".join(sorted_skills))
+        r_val.font.name = font_name
+        r_val.font.size = Pt(body_size)
+        r_val.font.color.rgb = RGBColor(0x33, 0x41, 0x55)
 
 
-def _add_experience(doc: Document, experience: list[dict], styles: dict) -> None:
+def _add_experience(doc: Document, experience: list[dict], candidate_profile: dict, styles: dict) -> None:
     if not experience:
         return
     _add_section_heading(doc, "Professional Experience", styles)
+    font_name = styles.get("font_name", "Calibri")
+    body_size = styles.get("body_size", 10)
+
     for exp in experience:
-        # Company + Title line
-        header_para = doc.add_paragraph()
-        header_para.paragraph_format.space_before = Pt(6)
-        header_para.paragraph_format.space_after = Pt(1)
-        title_run = header_para.add_run(exp.get("title", ""))
-        title_run.bold = True
-        title_run.font.name = styles["font_name"]
-        title_run.font.size = Pt(styles["body_size"])
-        header_para.add_run(f"  |  {exp.get('company', '')}")
-        for run in header_para.runs[1:]:
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"])
-
-        # Date + Location
-        date_str = f"{exp.get('start_date', '')} – {exp.get('end_date', 'Present')}"
-        loc = exp.get("location", "")
-        date_loc = f"{date_str}  |  {loc}" if loc else date_str
-        date_para = doc.add_paragraph(date_loc)
-        date_para.paragraph_format.space_after = Pt(2)
-        for run in date_para.runs:
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"] - 1)
-            run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-
-        # Bullets
-        for bullet in exp.get("bullets", []):
-            bp = doc.add_paragraph(style="List Bullet")
-            run = bp.add_run(bullet)
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"])
-            bp.paragraph_format.space_after = Pt(1)
-
-
-def _add_projects(doc: Document, projects: list[dict], styles: dict) -> None:
-    if not projects:
-        return
-    _add_section_heading(doc, "Projects", styles)
-    for proj in projects:
-        header_para = doc.add_paragraph()
-        header_para.paragraph_format.space_before = Pt(4)
-        header_para.paragraph_format.space_after = Pt(1)
-        name_run = header_para.add_run(proj.get("name", ""))
-        name_run.bold = True
-        name_run.font.name = styles["font_name"]
-        name_run.font.size = Pt(styles["body_size"])
-
-        tech = proj.get("technologies", [])
-        if tech:
-            tech_para = doc.add_paragraph(f"Technologies: {', '.join(tech)}")
-            tech_para.paragraph_format.space_after = Pt(1)
-            for run in tech_para.runs:
-                run.font.name = styles["font_name"]
-                run.font.size = Pt(styles["body_size"] - 1)
-
-        desc = proj.get("description", "")
-        if desc:
-            dp = doc.add_paragraph(desc)
-            dp.paragraph_format.space_after = Pt(2)
-            for run in dp.runs:
-                run.font.name = styles["font_name"]
-                run.font.size = Pt(styles["body_size"])
-
-        for hl in proj.get("highlights", []):
-            bp = doc.add_paragraph(style="List Bullet")
-            run = bp.add_run(hl)
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"])
-            bp.paragraph_format.space_after = Pt(1)
-
-
-def _add_education(doc: Document, education: list[dict], styles: dict) -> None:
-    if not education:
-        return
-    _add_section_heading(doc, "Education", styles)
-    for edu in education:
         para = doc.add_paragraph()
-        para.paragraph_format.space_before = Pt(4)
+        para.paragraph_format.space_before = Pt(6)
         para.paragraph_format.space_after = Pt(1)
-        run = para.add_run(f"{edu.get('degree', '')} — {edu.get('institution', '')}")
-        run.bold = True
-        run.font.name = styles["font_name"]
-        run.font.size = Pt(styles["body_size"])
 
-        year = edu.get("end_year", "")
-        field = edu.get("field_of_study", "")
-        detail_parts = [p for p in [field, year] if p]
-        if detail_parts:
-            dp = doc.add_paragraph(" | ".join(detail_parts))
-            dp.paragraph_format.space_after = Pt(1)
-            for r in dp.runs:
-                r.font.name = styles["font_name"]
-                r.font.size = Pt(styles["body_size"] - 1)
+        title = exp.get("title", "") or exp.get("role", "")
+        company = exp.get("company", "")
+        location = exp.get("location", "")
+        start_date = exp.get("start_date", "")
+        end_date = exp.get("end_date", "Present")
+        date_str = f"{start_date} – {end_date}" if start_date else end_date
 
+        header_text = f"{title} — {company}"
+        if location:
+            header_text += f", {location}"
 
-def _add_certifications(doc: Document, certifications: list[dict], styles: dict) -> None:
-    if not certifications:
-        return
-    _add_section_heading(doc, "Certifications", styles)
-    for cert in certifications:
-        para = doc.add_paragraph(style="List Bullet")
-        run = para.add_run(f"{cert.get('name', '')} — {cert.get('issuer', '')}")
-        run.font.name = styles["font_name"]
-        run.font.size = Pt(styles["body_size"])
-        if cert.get("date"):
-            para.add_run(f"  ({cert.get('date', '')})")
-        para.paragraph_format.space_after = Pt(1)
+        r_head = para.add_run(header_text)
+        r_head.bold = True
+        r_head.font.name = font_name
+        r_head.font.size = Pt(body_size + 0.5)
+        r_head.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
+
+        r_date = para.add_run(f"\t{date_str}")
+        r_date.bold = True
+        r_date.font.name = font_name
+        r_date.font.size = Pt(body_size)
+        r_date.font.color.rgb = RGBColor(0x33, 0x41, 0x55)
+
+        progression = exp.get("progression") or "Progression: Trainee → Junior → Associate Software Engineer"
+        if progression:
+            prog_para = doc.add_paragraph()
+            prog_para.paragraph_format.space_after = Pt(2)
+            r_prog = prog_para.add_run(progression)
+            r_prog.italic = True
+            r_prog.font.name = font_name
+            r_prog.font.size = Pt(9)
+            r_prog.font.color.rgb = RGBColor(0x47, 0x55, 0x69)
+
+        for b in exp.get("bullets", []):
+            bp = doc.add_paragraph(style="List Bullet")
+            bp.paragraph_format.space_after = Pt(2)
+            r_b = bp.add_run(b)
+            r_b.font.name = font_name
+            r_b.font.size = Pt(body_size)
+            r_b.font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
 
 
 def _update_doc_in_place(doc: Document, customized_content: dict, candidate_profile: dict, styles: dict) -> bool:
     """
     Performs text replacements directly inside the cloned master DOCX.
     Preserves all paragraph formats, run fonts, colors, bullet styles, margins, and headers.
-    Returns True if in-place update succeeded, False if fallback to scratch build is needed.
     """
     summary = customized_content.get("summary", "")
     skills_section = customized_content.get("skills_section", {})
@@ -287,33 +323,36 @@ def _update_doc_in_place(doc: Document, customized_content: dict, candidate_prof
         elif current_section:
             section_paragraphs[current_section].append(para)
 
-    # If no recognized headings were found, return False to use scratch build
     if not section_paragraphs:
         return False
 
-    # 1. Update Summary in-place
+    # 1. Update Summary in-place preserving runs
     if summary and "summary" in section_paragraphs and section_paragraphs["summary"]:
         summary_paras = section_paragraphs["summary"]
-        summary_paras[0].text = summary
-        for run in summary_paras[0].runs:
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"])
+        if summary_paras[0].runs:
+            summary_paras[0].runs[0].text = summary
+            for r in summary_paras[0].runs[1:]:
+                r.text = ""
+        else:
+            summary_paras[0].text = summary
         for extra_p in summary_paras[1:]:
             extra_p.text = ""
 
-    # 2. Update Skills in-place
+    # 2. Update Skills in-place preserving runs
     skills = skills_section.get("highlighted", skills_section.get("all", []))
     if skills and "skills" in section_paragraphs and section_paragraphs["skills"]:
         skills_paras = section_paragraphs["skills"]
         skills_str = " • ".join(skills)
-        skills_paras[0].text = skills_str
-        for run in skills_paras[0].runs:
-            run.font.name = styles["font_name"]
-            run.font.size = Pt(styles["body_size"])
+        if skills_paras[0].runs:
+            skills_paras[0].runs[0].text = skills_str
+            for r in skills_paras[0].runs[1:]:
+                r.text = ""
+        else:
+            skills_paras[0].text = skills_str
         for extra_p in skills_paras[1:]:
             extra_p.text = ""
 
-    # 3. Update Experience bullets in-place
+    # 3. Update Experience bullets in-place preserving runs
     if experience and "experience" in section_paragraphs and section_paragraphs["experience"]:
         exp_paras = section_paragraphs["experience"]
         all_bullets = []
@@ -322,19 +361,18 @@ def _update_doc_in_place(doc: Document, customized_content: dict, candidate_prof
 
         bullet_idx = 0
         for para in exp_paras:
-            if para.text.strip() and (para.style.name.startswith("List") or para.text.strip().startswith(("•", "-", "*")) or len(para.text.strip()) > 30):
+            if para.text.strip() and (para.style.name.startswith("List") or para.text.strip().startswith(("•", "-", "*")) or len(para.text.strip()) > 25):
                 if bullet_idx < len(all_bullets):
                     new_bullet = all_bullets[bullet_idx]
                     bullet_idx += 1
-                    if para.text.strip().startswith("•"):
-                        para.text = f"• {new_bullet}"
-                    elif para.text.strip().startswith("-"):
-                        para.text = f"- {new_bullet}"
+                    prefix = "• " if para.text.strip().startswith("•") else ("- " if para.text.strip().startswith("-") else "")
+                    full_txt = f"{prefix}{new_bullet}"
+                    if para.runs:
+                        para.runs[0].text = full_txt
+                        for r in para.runs[1:]:
+                            r.text = ""
                     else:
-                        para.text = new_bullet
-                    for run in para.runs:
-                        run.font.name = styles["font_name"]
-                        run.font.size = Pt(styles["body_size"])
+                        para.text = full_txt
 
     return True
 
@@ -354,19 +392,10 @@ def _build_doc_from_scratch(doc: Document, customized_content: dict, candidate_p
 
     skills_section = customized_content.get("skills_section", {})
     if skills_section:
-        _add_skills(doc, skills_section, styles)
+        _add_skills(doc, skills_section, candidate_profile, styles)
 
     experience = customized_content.get("experience", [])
-    _add_experience(doc, experience, styles)
-
-    projects = customized_content.get("projects", [])
-    _add_projects(doc, projects, styles)
-
-    education = candidate_profile.get("education", [])
-    _add_education(doc, education, styles)
-
-    certifications = candidate_profile.get("certifications", [])
-    _add_certifications(doc, certifications, styles)
+    _add_experience(doc, experience, candidate_profile, styles)
 
 
 def generate_resume_docx(

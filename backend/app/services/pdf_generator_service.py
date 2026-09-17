@@ -71,10 +71,83 @@ def _convert_via_libreoffice(docx_bytes: bytes) -> bytes:
             return f.read()
 
 
+import html as html_module
+import re
+
+
+def _paragraph_to_reportlab_html(p) -> str:
+    """
+    Parses python-docx Paragraph elements (<w:r> runs and <w:hyperlink> nodes) into
+    ReportLab HTML-compatible text, preserving bold/italic/colors and active <a href="..."> links.
+    """
+    html_parts = []
+
+    for child in p._p:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "hyperlink":
+            r_id = child.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+            url = ""
+            if r_id and hasattr(p.part, 'rels') and r_id in p.part.rels:
+                url = p.part.rels[r_id].target_ref
+
+            link_text = "".join(node.text for node in child.iter() if node.tag.endswith("t")).strip()
+            escaped_text = html_module.escape(link_text)
+
+            if not url:
+                lt_lower = link_text.lower()
+                if "linkedin" in lt_lower: url = "https://linkedin.com"
+                elif "github" in lt_lower: url = "https://github.com"
+                elif "portfolio" in lt_lower: url = "https://portfolio.dev"
+                elif "@" in lt_lower: url = f"mailto:{link_text}"
+
+            if url and link_text:
+                if not url.startswith("http") and not url.startswith("mailto:"):
+                    url = f"https://{url}"
+                html_parts.append(f'<font color="#1d4ed8"><u><a href="{url}">{escaped_text}</a></u></font>')
+            elif link_text:
+                html_parts.append(escaped_text)
+
+        elif tag == "r":
+            text_nodes = [node.text for node in child.iter() if node.tag.endswith("t")]
+            text = "".join(text_nodes)
+            if not text:
+                continue
+
+            escaped = html_module.escape(text)
+
+            rPr = child.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rPr")
+            is_bold = rPr is not None and (rPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}b") is not None)
+            is_italic = rPr is not None and (rPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}i") is not None)
+
+            color_hex = None
+            if rPr is not None:
+                color_node = rPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}color")
+                if color_node is not None:
+                    c_val = color_node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val")
+                    if c_val and c_val != "auto" and len(c_val) == 6:
+                        color_hex = f"#{c_val}"
+
+            # Auto-link raw URLs / emails in run text
+            if "@" in escaped and "<a href=" not in escaped:
+                escaped = re.sub(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", r'<font color="#1d4ed8"><u><a href="mailto:\1">\1</a></u></font>', escaped)
+
+            if is_bold:
+                escaped = f"<b>{escaped}</b>"
+            if is_italic:
+                escaped = f"<i>{escaped}</i>"
+            if color_hex:
+                escaped = f'<font color="{color_hex}">{escaped}</font>'
+
+            html_parts.append(escaped)
+
+    return "".join(html_parts)
+
+
 def _convert_via_reportlab(docx_bytes: bytes) -> bytes:
     """
     Pure-Python fallback when docx2pdf and LibreOffice CLI binaries are unavailable.
-    Parses docx paragraphs/tables using python-docx and builds a clean PDF via ReportLab.
+    Parses docx paragraphs/tables using python-docx and builds a clean PDF via ReportLab
+    preserving active links, bold formatting, section borders, and font colors.
     """
     import docx
     from reportlab.lib.pagesizes import letter
@@ -99,19 +172,19 @@ def _convert_via_reportlab(docx_bytes: bytes) -> bytes:
     title_style = ParagraphStyle(
         'DocTitle',
         parent=styles['Heading1'],
-        fontSize=15,
-        leading=18,
+        fontSize=20,
+        leading=24,
         textColor=colors.HexColor("#0f172a"),
-        spaceAfter=6,
+        spaceAfter=2,
     )
-    heading_style = ParagraphStyle(
-        'DocHeading',
+    section_heading_style = ParagraphStyle(
+        'DocSectionHeading',
         parent=styles['Heading2'],
-        fontSize=12,
-        leading=15,
-        textColor=colors.HexColor("#1e40af"),
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor("#0f172a"),
         spaceBefore=8,
-        spaceAfter=4,
+        spaceAfter=2,
     )
     body_style = ParagraphStyle(
         'DocBody',
@@ -121,25 +194,45 @@ def _convert_via_reportlab(docx_bytes: bytes) -> bytes:
         textColor=colors.HexColor("#334155"),
         spaceAfter=3,
     )
+    bullet_style = ParagraphStyle(
+        'DocBullet',
+        parent=body_style,
+        leftIndent=14,
+        spaceAfter=2,
+    )
 
     story = []
 
     for p in doc.paragraphs:
-        text = p.text.strip()
-        if not text:
+        txt = p.text.strip()
+        if not txt:
             continue
+
+        html_text = _paragraph_to_reportlab_html(p)
         style_name = p.style.name.lower() if p.style else ""
-        if "heading 1" in style_name or "title" in style_name:
-            story.append(Paragraph(text, title_style))
-        elif "heading" in style_name:
-            story.append(Paragraph(text, heading_style))
+
+        is_heading = any(h in txt.upper() for h in ["PROFESSIONAL SUMMARY", "TECHNICAL SKILLS", "PROFESSIONAL EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS"]) and len(txt) < 45
+
+        if "title" in style_name or ("name" in style_name and len(txt) < 35):
+            story.append(Paragraph(html_text, title_style))
+        elif is_heading:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(f"<b>{txt.upper()}</b>", section_heading_style))
+            # Solid section bottom border line
+            t = Table([[""]], colWidths=[540], rowHeights=[1.5])
+            t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#0f172a'))]))
+            story.append(t)
+            story.append(Spacer(1, 3))
+        elif p.style.name.startswith("List") or txt.startswith(("•", "-", "*")):
+            clean_txt = re.sub(r"^[•\-\*\s]+", "", html_text).strip()
+            story.append(Paragraph(f"&bull; {clean_txt}", bullet_style))
         else:
-            story.append(Paragraph(text, body_style))
+            story.append(Paragraph(html_text, body_style))
 
     for table in doc.tables:
         table_data = []
         for row in table.rows:
-            row_data = [Paragraph(cell.text.strip(), body_style) for cell in row.cells]
+            row_data = [Paragraph(_paragraph_to_reportlab_html(cell.paragraphs[0]) if cell.paragraphs else cell.text.strip(), body_style) for cell in row.cells]
             table_data.append(row_data)
         if table_data:
             t = Table(table_data)
