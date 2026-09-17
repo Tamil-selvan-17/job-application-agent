@@ -193,3 +193,57 @@ async def customize_resume(
     result["ats_analysis"]["match_percentage"] = match_pct
 
     return result
+
+
+COVER_LETTER_PROMPT = """Write a professional, compelling, 3-paragraph Cover Letter for a software engineer applying to a specific role.
+
+Candidate Name: {candidate_name}
+Target Job Title: {job_title}
+Company: {company}
+Key JD Keywords/Technologies: {technologies}
+Candidate Experience/Skills: {skills}
+
+RULES:
+1. Paragraph 1: Express strong interest in the {job_title} position at {company}. Mention candidate's 4+ years of experience in full stack software engineering with Angular, .NET Core, C#, SQL Server, Redis, and AI/RAG.
+2. Paragraph 2: Highlight key accomplishments, technology match, and how their background directly aligns with {company}'s requirements.
+3. Paragraph 3: Closing statement expressing eagerness to discuss fit in an interview.
+4. Professional tone, direct, no clichés.
+
+Return ONLY the cover letter text paragraphs separated by blank lines."""
+
+
+async def generate_cover_letter_text(candidate_profile: dict, jd_analysis: dict, original_resume_text: str) -> str:
+    """Generates tailored 3-paragraph cover letter text for a job."""
+    personal = candidate_profile.get("personal", {})
+    name = personal.get("full_name", "") or "Tamilselvan G"
+    job_title = jd_analysis.get("jobTitle", "") or "Software Engineer"
+    company = jd_analysis.get("company", "") or "Company"
+    techs = ", ".join(jd_analysis.get("technologies", [])[:10]) or "Angular, .NET Core, SQL Server, Redis, AI/RAG"
+    skills = ", ".join(candidate_profile.get("skills", [])[:10]) or "Angular, .NET Core, C#, SQL Server, Redis"
+
+    prompt = COVER_LETTER_PROMPT.format(
+        candidate_name=name,
+        job_title=job_title,
+        company=company,
+        technologies=techs,
+        skills=skills,
+    )
+
+    try:
+        provider = await get_ai_provider()
+        text = await provider.generate(prompt)
+        if text and len(text.strip()) > 100:
+            return text.strip()
+    except Exception as e:
+        pass
+
+    return f"""Dear Hiring Manager at {company},
+
+I am writing to express my strong interest in the {job_title} position at {company}. With 4+ years of experience delivering scalable enterprise web applications using Angular, .NET Core, C#, SQL Server, Redis, and AI/RAG architectures, I am confident in my ability to make an immediate impact on your engineering team.
+
+In my recent roles, I have architected responsive web UIs, engineered RESTful microservices, integrated caching layers, and implemented real-time features using SignalR. My technical expertise directly aligns with your requirements for {techs}.
+
+I welcome the opportunity to discuss how my background and skills align with your goals for the {job_title} position. Thank you for your time and consideration.
+
+Sincerely,
+{name}"""

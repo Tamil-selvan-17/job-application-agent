@@ -287,3 +287,74 @@ def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
         logger.error("ReportLab conversion failed: %s", e)
         raise RuntimeError(f"PDF conversion failed: {e}")
 
+
+def generate_cover_letter_pdf(candidate_profile: dict, job_title: str, company: str, cover_letter_text: str) -> bytes:
+    """
+    Generates a professional 1-page Cover Letter PDF matching the candidate profile styling.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    buffer = io.BytesIO()
+    pdf_doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+
+    styles = getSampleStyleSheet()
+    normal = styles['Normal']
+
+    personal = (candidate_profile or {}).get("personal", {})
+    name = personal.get("full_name", "") or "TAMILSELVAN G"
+    phone = personal.get("phone", "") or "+91 7200206323"
+    email = personal.get("email", "") or "tamilselvang0002@gmail.com"
+    location = personal.get("location", "") or "Chennai, India"
+
+    title_style = ParagraphStyle(
+        'CLTitle', parent=styles['Heading1'], fontSize=20, leading=24, textColor=colors.HexColor("#0f172a"), spaceAfter=2,
+    )
+    sub_style = ParagraphStyle(
+        'CLSub', parent=normal, fontSize=10.5, leading=14, textColor=colors.HexColor("#1d4ed8"), spaceAfter=4,
+    )
+    meta_style = ParagraphStyle(
+        'CLMeta', parent=normal, fontSize=9.5, leading=13, textColor=colors.HexColor("#475569"), spaceAfter=10,
+    )
+    body_style = ParagraphStyle(
+        'CLBody', parent=normal, fontSize=10.5, leading=15, textColor=colors.HexColor("#1e293b"), spaceAfter=8,
+    )
+
+    story = []
+    story.append(Paragraph(f"<b>{html_module.escape(name.upper())}</b>", title_style))
+    story.append(Paragraph(f"<b>Full Stack Software Engineer | Cover Letter</b>", sub_style))
+    story.append(Paragraph(f"{html_module.escape(phone)} | <font color='#1d4ed8'><u><a href='mailto:{html_module.escape(email)}'>{html_module.escape(email)}</a></u></font> | {html_module.escape(location)}", meta_style))
+
+    t = Table([[""]], colWidths=[540], rowHeights=[1.5])
+    t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#0f172a'))]))
+    story.append(t)
+    story.append(Spacer(1, 14))
+
+    today_str = datetime.now().strftime("%B %d, %Y")
+    story.append(Paragraph(today_str, body_style))
+    story.append(Paragraph(f"<b>Hiring Manager / Talent Acquisition Team</b><br/>{html_module.escape(company)}", body_style))
+    story.append(Spacer(1, 6))
+
+    story.append(Paragraph(f"<b>RE: Application for {html_module.escape(job_title)} Position</b>", body_style))
+    story.append(Spacer(1, 6))
+
+    paragraphs = [p.strip() for p in cover_letter_text.split("\n\n") if p.strip()]
+    for p_text in paragraphs:
+        escaped_p = html_module.escape(p_text)
+        story.append(Paragraph(escaped_p, body_style))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Sincerely,<br/><b>" + html_module.escape(name) + "</b>", body_style))
+
+    pdf_doc.build(story)
+    return buffer.getvalue()
+

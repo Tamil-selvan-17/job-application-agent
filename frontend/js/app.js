@@ -1305,7 +1305,7 @@ const App = {
     try {
       const d = await API.post(`/api/jobs/${State.currentJobId}/apply-email-personalized/preview`, { hr_email: email });
       $('jdp-email-subject').value = d.subject || '';
-      $('jdp-email-body').value    = d.body    || '';
+      $('jdp-email-body').value    = d.html_body || d.body || '';
       show('jdp-email-preview-block');
       setMsg('jdp-email-msg', '', '');
     } catch(e) {
@@ -1313,7 +1313,7 @@ const App = {
       try {
         const d = await API.post(`/api/jobs/${State.currentJobId}/apply-email/preview`, { hr_email: email });
         $('jdp-email-subject').value = d.subject || '';
-        $('jdp-email-body').value    = d.body    || '';
+        $('jdp-email-body').value    = d.html_body || d.body || '';
         show('jdp-email-preview-block');
         setMsg('jdp-email-msg', '');
       } catch(e2) {

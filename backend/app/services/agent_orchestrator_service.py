@@ -169,6 +169,28 @@ async def run_resume_pipeline(job_id: str, force_regenerate: bool = False) -> di
     )
     pdf_filename = docx_filename.replace(".docx", ".pdf")
 
+    # Generate Cover Letter text & PDF
+    logger.info("[Orchestrator] Generating Cover Letter PDF for job %s", job_id)
+    try:
+        cover_letter_text = await resume_customizer_service.generate_cover_letter_text(
+            candidate_profile=profile,
+            jd_analysis=jd_analysis,
+            original_resume_text=original_resume_text,
+        )
+        cover_letter_pdf_bytes = pdf_generator_service.generate_cover_letter_pdf(
+            candidate_profile=profile,
+            job_title=job.get("title", ""),
+            company=job.get("company", ""),
+            cover_letter_text=cover_letter_text,
+        )
+        safe_company = "".join(c for c in job.get("company", "Company") if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        safe_title = "".join(c for c in job.get("title", "Role") if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        cover_letter_filename = f"Cover_Letter_{safe_company}_{safe_title}.pdf"
+    except Exception as e:
+        logger.warning("[Orchestrator] Cover letter generation failed: %s", e)
+        cover_letter_pdf_bytes = None
+        cover_letter_filename = None
+
     # Store in generated_resumes collection
     generated_resume_id = await application_tracker_service.store_generated_resume(
         job_id=job_id,
@@ -182,6 +204,8 @@ async def run_resume_pipeline(job_id: str, force_regenerate: bool = False) -> di
         ats_analysis=customized.get("ats_analysis", {}),
         customization_summary=customized.get("customization_summary", []),
         hooks_used=customized.get("hooks_used", []),
+        cover_letter_pdf_bytes=cover_letter_pdf_bytes,
+        cover_letter_filename=cover_letter_filename,
     )
 
     # Update job status
@@ -237,14 +261,18 @@ async def run_email_application(
             "duplicate": True,
         }
 
-    # Get generated resume
+    # Get generated resume & cover letter PDF
     resume_id = generated_resume_id or job.get("generated_resume_id")
     if not resume_id:
         raise ValueError("No generated resume found. Please generate a resume first.")
 
-    _, pdf_bytes, _, pdf_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
+    _, pdf_bytes, _, pdf_filename, cl_pdf_bytes, cl_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
     if not pdf_bytes:
         raise ValueError("PDF resume content is missing. Please regenerate the resume.")
+
+    attachments = [(pdf_bytes, pdf_filename)]
+    if cl_pdf_bytes:
+        attachments.append((cl_pdf_bytes, cl_filename or "Cover_Letter.pdf"))
 
     config = await config_service.get_config()
     profile = await candidate_service.get_profile()
@@ -260,7 +288,7 @@ async def run_email_application(
         subject=subject,
         html_body=html,
         to=hr_email,
-        attachments=[(pdf_bytes, pdf_filename)],
+        attachments=attachments,
     )
 
     if result.get("sent"):

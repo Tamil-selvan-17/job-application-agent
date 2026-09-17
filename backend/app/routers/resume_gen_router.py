@@ -65,7 +65,7 @@ async def preview_pdf(job_id: str):
         if not resume_id:
             raise HTTPException(404, "No generated resume found. Please generate a resume first.")
 
-        _, pdf_bytes, _, pdf_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
+        _, pdf_bytes, _, pdf_filename, *rest = await application_tracker_service.get_generated_resume_bytes(resume_id)
         if not pdf_bytes:
             raise HTTPException(404, "PDF file content not found. Please regenerate.")
 
@@ -87,7 +87,7 @@ async def download_pdf(job_id: str):
         if not resume_id:
             raise HTTPException(404, "No generated resume found.")
 
-        _, pdf_bytes, _, pdf_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
+        _, pdf_bytes, _, pdf_filename, *rest = await application_tracker_service.get_generated_resume_bytes(resume_id)
         if not pdf_bytes:
             raise HTTPException(404, "PDF content missing. Please regenerate.")
 
@@ -109,7 +109,7 @@ async def download_docx(job_id: str):
         if not resume_id:
             raise HTTPException(404, "No generated resume found.")
 
-        docx_bytes, _, docx_filename, _ = await application_tracker_service.get_generated_resume_bytes(resume_id)
+        docx_bytes, _, docx_filename, _, *rest = await application_tracker_service.get_generated_resume_bytes(resume_id)
         if not docx_bytes:
             raise HTTPException(404, "DOCX content missing. Please regenerate.")
 
@@ -117,6 +117,28 @@ async def download_docx(job_id: str):
             io.BytesIO(docx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="{docx_filename}"'},
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/{job_id}/download-cover-letter")
+async def download_cover_letter(job_id: str):
+    """Force-download the generated Cover Letter PDF."""
+    try:
+        job = await get_job(job_id)
+        resume_id = job.get("generated_resume_id")
+        if not resume_id:
+            raise HTTPException(404, "No generated resume found.")
+
+        *_, cl_bytes, cl_filename = await application_tracker_service.get_generated_resume_bytes(resume_id)
+        if not cl_bytes:
+            raise HTTPException(404, "Cover letter PDF content missing. Please regenerate.")
+
+        return StreamingResponse(
+            io.BytesIO(cl_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{cl_filename or "Cover_Letter.pdf"}"'},
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

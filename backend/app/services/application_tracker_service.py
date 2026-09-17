@@ -37,6 +37,8 @@ async def store_generated_resume(
     ats_analysis: dict,
     customization_summary: list[str],
     hooks_used: list[str],
+    cover_letter_pdf_bytes: bytes | None = None,
+    cover_letter_filename: str | None = None,
 ) -> str:
     """Stores DOCX + PDF as base64. Returns the generated_resume _id string."""
     db = get_db()
@@ -49,6 +51,8 @@ async def store_generated_resume(
         "pdf_filename": pdf_filename,
         "docx_base64": base64.b64encode(docx_bytes).decode("ascii"),
         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        "cover_letter_pdf_base64": base64.b64encode(cover_letter_pdf_bytes).decode("ascii") if cover_letter_pdf_bytes else None,
+        "cover_letter_filename": cover_letter_filename,
         "ats_score": ats_score,
         "ats_analysis": ats_analysis,
         "customization_summary": customization_summary,
@@ -79,15 +83,17 @@ async def get_generated_resume_for_job(job_id: str) -> dict | None:
     return _resume_to_dict(doc) if doc else None
 
 
-async def get_generated_resume_bytes(resume_id: str) -> tuple[bytes, bytes, str, str]:
-    """Returns (docx_bytes, pdf_bytes, docx_filename, pdf_filename)."""
+async def get_generated_resume_bytes(resume_id: str) -> tuple[bytes, bytes, str, str, bytes | None, str | None]:
+    """Returns (docx_bytes, pdf_bytes, docx_filename, pdf_filename, cover_letter_pdf_bytes, cover_letter_filename)."""
     db = get_db()
     doc = await db.generated_resumes.find_one({"_id": ObjectId(resume_id)})
     if not doc:
         raise ValueError("Generated resume not found")
     docx = base64.b64decode(doc.get("docx_base64", "")) if doc.get("docx_base64") else b""
     pdf = base64.b64decode(doc.get("pdf_base64", "")) if doc.get("pdf_base64") else b""
-    return docx, pdf, doc.get("docx_filename", "resume.docx"), doc.get("pdf_filename", "resume.pdf")
+    cl_pdf = base64.b64decode(doc.get("cover_letter_pdf_base64", "")) if doc.get("cover_letter_pdf_base64") else None
+    cl_fn = doc.get("cover_letter_filename")
+    return docx, pdf, doc.get("docx_filename", "resume.docx"), doc.get("pdf_filename", "resume.pdf"), cl_pdf, cl_fn
 
 
 async def mark_resume_applied(resume_id: str) -> None:
@@ -112,7 +118,7 @@ async def cleanup_expired_resumes() -> int:
 
 
 def _resume_to_dict(doc: dict) -> dict:
-    d = {k: v for k, v in doc.items() if k not in ("docx_base64", "pdf_base64")}
+    d = {k: v for k, v in doc.items() if k not in ("docx_base64", "pdf_base64", "cover_letter_pdf_base64")}
     d["id"] = str(d.pop("_id"))
     return d
 
