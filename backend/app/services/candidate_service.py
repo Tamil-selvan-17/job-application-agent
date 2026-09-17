@@ -151,7 +151,7 @@ async def _auto_enrich_profile(doc: dict) -> tuple[dict, bool]:
     doc["preferences"] = pref
 
     # 2. Auto-link original DOCX resume if original_resume_id is missing or invalid
-    current_resume_id = doc.get("original_resume_id", "")
+    current_resume_id = doc.get("original_resume_id") or doc.get("template_resume_id") or ""
     try:
         resume_valid = False
         if current_resume_id:
@@ -170,13 +170,18 @@ async def _auto_enrich_profile(doc: dict) -> tuple[dict, bool]:
 
             if default_resume and default_resume.get("file_type") == "docx":
                 doc["original_resume_id"] = str(default_resume["_id"])
+                doc["template_resume_id"] = str(default_resume["_id"])
                 modified = True
             else:
                 # Fallback to latest uploaded .docx resume
                 latest_docx = await db.resumes.find_one({"file_type": "docx"}, sort=[("uploaded_at", -1)])
                 if latest_docx:
                     doc["original_resume_id"] = str(latest_docx["_id"])
+                    doc["template_resume_id"] = str(latest_docx["_id"])
                     modified = True
+        else:
+            doc["original_resume_id"] = current_resume_id
+            doc["template_resume_id"] = current_resume_id
     except Exception:
         pass
 

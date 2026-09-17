@@ -193,7 +193,7 @@ function buildJobCard(job) {
   const atsScore = job.ats_score;
 
   return `
-  <div class="job-card glow" id="job-card-${job.id}" onclick="App.openJobDetail(${job.id})">
+  <div class="job-card glow" id="job-card-${job.id}" onclick="App.openJobDetail('${job.id}')">
     <div class="job-card-top">
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         ${statusBadgeHTML(status)}
@@ -216,12 +216,12 @@ function buildJobCard(job) {
       </div>
     </div>
     <div class="job-card-actions" onclick="event.stopPropagation()">
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.analyzeJD()">Analyze JD</button>
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.findContacts()">Find HR</button>
-      <button class="btn btn-primary btn-xs" onclick="App.openJobDetail(${job.id});App.generateResume()">Gen Resume</button>
-      ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.previewResumePDF()">Preview PDF</button>` : ''}
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.focusEmailHR()">Email HR</button>
-      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail(${job.id});App.startWebsiteApply()">Apply Web</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.analyzeJD())">Analyze JD</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.findContacts())">Find HR</button>
+      <button class="btn btn-primary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.generateResume())">Gen Resume</button>
+      ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.previewResumePDF())">Preview PDF</button>` : ''}
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.focusEmailHR())">Email HR</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openJobDetail('${job.id}').then(()=>App.startWebsiteApply())">Apply Web</button>
     </div>
   </div>`;
 }
@@ -571,9 +571,10 @@ const App = {
     App._renderAccordion('certs-list',        data.certifications|| [], 'certifications');
 
     // Template select
-    if (data.template_resume_id) {
+    const templateId = data.original_resume_id || data.template_resume_id || '';
+    if (templateId) {
       const sel = $('profile-template-select');
-      if (sel) sel.value = data.template_resume_id;
+      if (sel) sel.value = templateId;
     }
   },
 
@@ -623,7 +624,7 @@ const App = {
       const docxList = list.filter(r => (r.filename || r.name || '').toLowerCase().endsWith('.docx'));
       const sel = $('profile-template-select');
       if (!sel) return;
-      const current = sel.value;
+      const current = sel.value || (State.profileData && (State.profileData.original_resume_id || State.profileData.template_resume_id)) || '';
       sel.innerHTML = '<option value="">— select uploaded DOCX —</option>' +
         docxList.map(r => `<option value="${r.id}">${esc(r.filename || r.name)}</option>`).join('');
       if (current) sel.value = current;
@@ -632,8 +633,10 @@ const App = {
 
   async saveProfile() {
     const getData = (id) => $(id)?.value || '';
+    const templateId = $('profile-template-select')?.value || (State.profileData && (State.profileData.original_resume_id || State.profileData.template_resume_id)) || '';
     const profile = {
       name:                  getData('p-name'),
+      full_name:             getData('p-name'),
       email:                 getData('p-email'),
       phone:                 getData('p-phone'),
       location:              getData('p-location'),
@@ -655,13 +658,31 @@ const App = {
       experience:            State.profileData.experience    || [],
       projects:              State.profileData.projects      || [],
       certifications:        State.profileData.certifications|| [],
+      original_resume_id:    templateId,
+      template_resume_id:    templateId,
+      personal: {
+        full_name: getData('p-name'),
+        email:     getData('p-email'),
+        phone:     getData('p-phone'),
+        location:  getData('p-location'),
+        linkedin:  getData('p-linkedin'),
+        github:    getData('p-github'),
+      },
+      career: {
+        current_title:    getData('p-target-role'),
+        total_experience: getData('p-years-exp'),
+        current_company:  getData('p-current-company'),
+        current_ctc:      getData('p-current-salary'),
+        expected_salary:  getData('p-expected-salary'),
+        notice_period:    getData('p-notice-period'),
+      },
+      skills: State.tagsData.technical,
     };
-    const templateId = $('profile-template-select')?.value;
-    if (templateId) profile.template_resume_id = templateId;
 
     setMsg('profile-save-msg', 'Saving...', '');
     try {
-      await API.put('/api/candidate', profile);
+      const updated = await API.put('/api/candidate', profile);
+      State.profileData = updated || profile;
       setMsg('profile-save-msg', '✓ Saved!', 'success');
       Toast.success('Profile saved!');
       setTimeout(() => setMsg('profile-save-msg', ''), 3000);
@@ -676,8 +697,9 @@ const App = {
     if (!id) { Toast.warning('Select a DOCX file first'); return; }
     try {
       const curr = await API.get('/api/candidate');
-      await API.put('/api/candidate', { ...curr, template_resume_id: id });
-      Toast.success('Template saved!');
+      const updated = await API.put('/api/candidate', { ...curr, original_resume_id: id, template_resume_id: id });
+      State.profileData = updated || { ...curr, original_resume_id: id, template_resume_id: id };
+      Toast.success('DOCX Template saved!');
     } catch(e) {
       Toast.error('Failed: ' + e.message);
     }
@@ -847,7 +869,7 @@ const App = {
             <div class="resume-name">${esc(a.company)} — ${esc(a.role || a.title)}</div>
             <div class="resume-meta">Due: ${fmtDate(a.followup_due || a.followup_date)}</div>
           </div>
-          <button class="btn btn-secondary btn-xs" onclick="App.previewFollowup(${a.job_id || a.id})">Preview & Send</button>
+          <button class="btn btn-secondary btn-xs" onclick="App.previewFollowup('${a.job_id || a.id}')">Preview & Send</button>
         </div>`).join('');
     } catch { /* ignore */ }
   },
@@ -1351,8 +1373,9 @@ const App = {
             </div>
           </div>
           <div class="resume-actions">
-            <button class="btn btn-secondary btn-xs" onclick="App.showResumeDetail(${r.id})">Details</button>
-            ${!isDefault ? `<button class="btn btn-ghost btn-xs" onclick="App.setResumeDefaultById(${r.id})">Set Default</button>` : ''}
+            <button class="btn btn-secondary btn-xs" onclick="App.showResumeDetail('${r.id}')">Details</button>
+            ${!isDefault ? `<button class="btn btn-ghost btn-xs" onclick="App.setResumeDefaultById('${r.id}')">Set Default</button>` : ''}
+            <button class="btn btn-danger btn-xs" onclick="App.deleteResumeById('${r.id}')">Remove</button>
           </div>
         </div>`;
     }).join('');
@@ -1379,8 +1402,13 @@ const App = {
   },
 
   async showResumeDetail(resumeId) {
-    State.currentResumeId = resumeId;
-    const resume = State.allResumes.find(r => r.id === resumeId);
+    State.currentResumeId = String(resumeId);
+    let resume = State.allResumes.find(r => String(r.id) === String(resumeId));
+    try {
+      const detail = await API.get(`/api/resumes/${resumeId}`);
+      if (detail) resume = detail;
+    } catch { /* use cached */ }
+
     if (!resume) return;
     setText('resume-detail-title', resume.filename || resume.name);
     setText('resume-detail-text', resume.extracted_text || '(No text extracted yet)');
@@ -1407,12 +1435,13 @@ const App = {
     }
   },
 
-  async deleteResume() {
-    if (!State.currentResumeId || !confirm('Delete this resume?')) return;
+  async deleteResume()            { await App.deleteResumeById(State.currentResumeId); },
+  async deleteResumeById(id) {
+    if (!id || !confirm('Are you sure you want to remove this resume file?')) return;
     try {
-      await API.del(`/api/resumes/${State.currentResumeId}`);
-      Toast.success('Resume deleted.');
-      hide('resume-detail-card');
+      await API.del(`/api/resumes/${id}`);
+      Toast.success('Resume removed.');
+      if (State.currentResumeId === String(id)) hide('resume-detail-card');
       App.loadResumes();
     } catch(e) {
       Toast.error('Delete failed: ' + e.message);
