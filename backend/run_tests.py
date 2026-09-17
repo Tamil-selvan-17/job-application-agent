@@ -18,10 +18,11 @@ from tests.test_services import TestServices
 from tests.test_routers import TestRouters
 
 if __name__ == "__main__":
+    loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestModels))
-    suite.addTest(unittest.makeSuite(TestServices))
-    suite.addTest(unittest.makeSuite(TestRouters))
+    suite.addTest(loader.loadTestsFromTestCase(TestModels))
+    suite.addTest(loader.loadTestsFromTestCase(TestServices))
+    suite.addTest(loader.loadTestsFromTestCase(TestRouters))
     
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

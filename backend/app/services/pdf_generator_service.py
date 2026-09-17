@@ -67,16 +67,21 @@ def _convert_via_libreoffice(docx_bytes: bytes) -> bytes:
 def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """
     Public interface. Tries docx2pdf first (Windows/MS Word), falls back to
-    LibreOffice if docx2pdf is not available.
+    LibreOffice if docx2pdf is not available or running on non-Windows.
 
     Always runs synchronously (call via run_in_executor from async code).
     """
-    try:
-        import docx2pdf  # noqa: F401
-        return _convert_via_docx2pdf(docx_bytes)
-    except ImportError:
-        logger.warning("docx2pdf not available, trying LibreOffice")
-    except Exception as e:
-        logger.warning("docx2pdf failed (%s), trying LibreOffice", e)
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            import docx2pdf  # noqa: F401
+            return _convert_via_docx2pdf(docx_bytes)
+        except ImportError:
+            logger.warning("docx2pdf not available on Windows, trying LibreOffice")
+        except Exception as e:
+            logger.warning("docx2pdf failed (%s), trying LibreOffice", e)
+    else:
+        logger.info("Non-Windows platform detected (%s), using LibreOffice for PDF conversion", sys.platform)
 
     return _convert_via_libreoffice(docx_bytes)

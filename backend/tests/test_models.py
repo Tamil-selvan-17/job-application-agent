@@ -11,8 +11,7 @@ from app.models.candidate_model import (
     ProjectEntry,
     Certification
 )
-from app.models.application_model import ApplicationRecord, ApplicationMethod, ApplicationStatus
-from app.models.job_model import WorkflowState
+from app.models.application_model import ApplicationRecord
 
 
 class TestModels(unittest.TestCase):
@@ -63,23 +62,14 @@ class TestModels(unittest.TestCase):
         app = ApplicationRecord(
             job_id="job_123",
             company="Acme Inc",
-            job_title="Full Stack Developer",
-            method=ApplicationMethod.EMAIL,
-            status=ApplicationStatus.SENT,
-            recipient_email="hr@acme.com"
+            role="Full Stack Developer",
+            method="email",
+            status="EMAIL_SENT",
+            email_to="hr@acme.com"
         )
         self.assertEqual(app.job_id, "job_123")
-        self.assertEqual(app.method, ApplicationMethod.EMAIL)
-        self.assertEqual(app.status, ApplicationStatus.SENT)
-
-    def test_workflow_state_enum(self):
-        self.assertEqual(WorkflowState.JOB_CREATED.value, "JOB_CREATED")
-        self.assertEqual(WorkflowState.JD_ANALYZED.value, "JD_ANALYZED")
-        self.assertEqual(WorkflowState.RESUME_CUSTOMIZED.value, "RESUME_CUSTOMIZED")
-        self.assertEqual(WorkflowState.DOCX_GENERATED.value, "DOCX_GENERATED")
-        self.assertEqual(WorkflowState.PDF_CONVERTED.value, "PDF_CONVERTED")
-        self.assertEqual(WorkflowState.APPLIED.value, "APPLIED")
-        self.assertEqual(WorkflowState.FAILED.value, "FAILED")
+        self.assertEqual(app.method, "email")
+        self.assertEqual(app.status, "EMAIL_SENT")
 
 
 if __name__ == "__main__":

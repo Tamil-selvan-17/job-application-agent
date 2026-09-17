@@ -14,8 +14,8 @@ apscheduler>=3.10.4
 langdetect>=1.0.9
 openpyxl>=3.1.5
 # ---- New dependencies for production upgrade ----
-# DOCX → PDF (uses MS Word COM on Windows; fallback: LibreOffice)
-docx2pdf>=0.1.8
+# DOCX → PDF (uses MS Word COM on Windows; fallback: LibreOffice on Linux)
+docx2pdf>=0.1.8; sys_platform == 'win32'
 # Selenium browser automation for "Apply on Website"
 selenium>=4.20.0
 webdriver-manager>=4.0.1
@@ -23,4 +23,4 @@ webdriver-manager>=4.0.1
 beautifulsoup4>=4.12.3
 lxml>=5.2.1
 # COM initialization for docx2pdf thread-pool calls on Windows
-pywin32>=306
+pywin32>=306; sys_platform == 'win32'

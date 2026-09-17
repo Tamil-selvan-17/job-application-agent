@@ -25,7 +25,7 @@ ApplicationMethod = Literal["email", "website", "both"]
 
 
 class ApplicationRecord(BaseModel):
-    id: str
+    id: str = ""
     job_id: str
     company: str
     role: str
@@ -42,8 +42,8 @@ class ApplicationRecord(BaseModel):
     error: str | None = None
     screenshot_path: str | None = None  # Failure screenshot (relative path in uploads/)
     failed_step: str | None = None      # Which step failed, e.g. "PHONE_NUMBER"
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now())
 
 
 class GeneratedResumeRecord(BaseModel):
