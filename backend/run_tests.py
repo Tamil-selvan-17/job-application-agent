@@ -16,6 +16,7 @@ import unittest
 from tests.test_models import TestModels
 from tests.test_services import TestServices
 from tests.test_routers import TestRouters
+from tests.test_interview_prep import TestAgentEnhancements
 
 if __name__ == "__main__":
     loader = unittest.TestLoader()
@@ -23,6 +24,7 @@ if __name__ == "__main__":
     suite.addTest(loader.loadTestsFromTestCase(TestModels))
     suite.addTest(loader.loadTestsFromTestCase(TestServices))
     suite.addTest(loader.loadTestsFromTestCase(TestRouters))
+    suite.addTest(loader.loadTestsFromTestCase(TestAgentEnhancements))
     
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

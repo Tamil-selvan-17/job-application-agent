@@ -132,8 +132,10 @@
     <div class="glass-card mb-3" id="jdp-analysis-section">
       <div class="card-header">
         <span>🔍 JD Analysis & ATS</span>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-secondary btn-sm" id="jdp-analyze-btn" onclick="App.runATSAnalysis()">Run ATS Analysis</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.openSkillsGapModal()">📊 Skills Gap</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.openInterviewPrepModal()">🎯 STAR Prep</button>
         </div>
       </div>
       <div class="card-body" id="jdp-analysis-body">
@@ -162,6 +164,20 @@
           </div>
         </div>
         <div id="jdp-analysis-placeholder" class="text-muted font-sm">Run ATS analysis to see skill matching and gap analysis.</div>
+      </div>
+    </div>
+
+    <!-- AI Career Coach & Interview Prep -->
+    <div class="glass-card mb-3" id="jdp-coach-section">
+      <div class="card-header">
+        <span>🤖 AI Interview Coach & Skills Fit</span>
+      </div>
+      <div class="card-body">
+        <p class="font-sm text-muted mb-3">Prepare tailored STAR interview Q&As and perform deep skills fit matrix analysis for this role.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="App.openSkillsGapModal()">📊 Skills Gap Matrix</button>
+          <button class="btn btn-primary btn-sm" onclick="App.openInterviewPrepModal()">🎯 STAR Interview Q&As</button>
+        </div>
       </div>
     </div>
 
@@ -276,11 +292,13 @@
       </div>
     </div>
 
-    <!-- Danger Zone -->
+    <!-- Danger Zone / Actions -->
     <div class="glass-card">
       <div class="card-header"><span>⚡ Actions</span></div>
       <div class="card-body">
-        <div class="btn-group">
+        <div class="btn-group mb-2">
+          <button class="btn btn-secondary btn-sm" onclick="App.openSkillsGapModal()">📊 Skills Gap Matrix</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.openInterviewPrepModal()">🎯 STAR Interview Q&As</button>
           <button class="btn btn-danger btn-sm" id="jdp-delete-btn" onclick="App.deleteJob()">Delete Job</button>
         </div>
         <div id="jdp-action-msg" class="font-sm mt-2"></div>
