@@ -38,6 +38,9 @@ async def search_and_store_jobs() -> dict:
     if not active_sources:
         active_sources = list(SOURCE_FETCHERS.keys())  # fall back to whatever's implemented
 
+    from app.services import candidate_service
+    profile = await candidate_service.get_profile()
+    cand_skills = profile.get("skills", [])
     skills = list(config.get("skills") or [])
     keywords_include = list(config.get("keywords_include") or [])
     keywords_exclude = list(config.get("keywords_exclude") or [])
@@ -51,7 +54,7 @@ async def search_and_store_jobs() -> dict:
     job_posted_within_days = int(config.get("job_posted_within_days", 45))
     target_language = config.get("language") or "English"
 
-    relevance_terms = list(dict.fromkeys(skills + keywords_include))  # dedup, keep order
+    relevance_terms = list(dict.fromkeys(cand_skills + skills + keywords_include))  # candidate resume skills + config terms
     min_hits = min(MIN_KEYWORD_HITS, max(1, len(relevance_terms)))
 
     fetched: list[dict] = []
@@ -128,7 +131,8 @@ async def search_and_store_jobs() -> dict:
                 skipped_irrelevant += 1
                 continue
 
-        existing = await db.jobs.find_one({"url": url})
+        from app.services.job_service import find_duplicate_job
+        existing = await find_duplicate_job(title, company, location, url)
         if existing:
             skipped_duplicate += 1
             continue

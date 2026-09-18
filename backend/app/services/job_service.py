@@ -64,8 +64,72 @@ def _extract_json(raw: str) -> dict:
     return json.loads(text)
 
 
+async def find_duplicate_job(title: str, company: str, location: str = "", url: str = "") -> dict | None:
+    db = get_db()
+    query_or = []
+    clean_url = (url or "").strip()
+    if clean_url:
+        query_or.append({"url": clean_url})
+    
+    clean_title = (title or "").strip()
+    clean_company = (company or "").strip()
+    if clean_title and clean_company:
+        query_or.append({
+            "title": {"$regex": f"^{re.escape(clean_title)}$", "$options": "i"},
+            "company": {"$regex": f"^{re.escape(clean_company)}$", "$options": "i"}
+        })
+    
+    if not query_or:
+        return None
+    
+    doc = await db.jobs.find_one({"$or": query_or})
+    if not doc:
+        return None
+    d = dict(doc)
+    d["id"] = str(d.pop("_id"))
+    return d
+
+
+async def deduplicate_existing_jobs() -> int:
+    """
+    Scans db.jobs collection, finds duplicate jobs (same title + company or url),
+    keeps the newest record, and deletes duplicates along with their orphaned applications/resumes.
+    """
+    db = get_db()
+    all_jobs = await db.jobs.find({}).sort("created_at", -1).to_list(length=10000)
+    seen_keys = set()
+    removed_count = 0
+
+    for job in all_jobs:
+        title = (job.get("title") or "").strip().lower()
+        company = (job.get("company") or "").strip().lower()
+        url = (job.get("url") or "").strip().lower()
+        
+        key = (title, company) if (title and company) else (url if url else str(job["_id"]))
+        
+        if key in seen_keys:
+            jid = str(job["_id"])
+            await db.jobs.delete_one({"_id": job["_id"]})
+            await db.applications.delete_many({"job_id": jid})
+            await db.generated_resumes.delete_many({"job_id": jid})
+            removed_count += 1
+        else:
+            seen_keys.add(key)
+
+    return removed_count
+
+
 async def create_job(data: dict) -> dict:
     db = get_db()
+    existing = await find_duplicate_job(
+        title=data.get("title", ""),
+        company=data.get("company", ""),
+        location=data.get("location", ""),
+        url=data.get("url", "")
+    )
+    if existing:
+        return existing
+
     now = datetime.now(timezone.utc)
     doc = {
         **data,
@@ -82,11 +146,9 @@ async def create_job(data: dict) -> dict:
 
 async def list_jobs(status: str | None = None, min_match: int | None = None) -> list[dict]:
     db = get_db()
+    await deduplicate_existing_jobs()
     query = {"status": status} if status else {}
     if min_match is not None:
-        # Only jobs that have actually been AI-analyzed carry a match_percent -
-        # unanalyzed jobs are excluded rather than guessed at when this filter
-        # is active. Use "Analyze All Unanalyzed" first to populate scores.
         query["analysis.match_percent"] = {"$gte": min_match}
     jobs = await db.jobs.find(query).sort("created_at", -1).to_list(length=500)
     return [_to_summary(j) for j in jobs]

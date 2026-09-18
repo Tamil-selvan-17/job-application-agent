@@ -125,6 +125,12 @@ async def import_excel_jobs(file_content: bytes) -> dict:
         if not job.get("hr_email"):
             job["hr_email"] = extract_email(job.get("description", "")) or ""
 
+        from app.services.job_service import find_duplicate_job
+        existing = await find_duplicate_job(job.get("title"), job.get("company"), job.get("location"), job.get("url"))
+        if existing:
+            skipped += 1
+            continue
+
         now = datetime.now(timezone.utc)
         await db.jobs.insert_one(
             {
