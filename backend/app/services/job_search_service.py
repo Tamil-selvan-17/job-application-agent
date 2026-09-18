@@ -39,7 +39,7 @@ async def search_and_store_jobs() -> dict:
         active_sources = list(SOURCE_FETCHERS.keys())  # fall back to whatever's implemented
 
     from app.services import candidate_service
-    profile = await candidate_service.get_profile()
+    profile = (await candidate_service.get_profile()) or {}
     cand_skills = profile.get("skills", [])
     skills = list(config.get("skills") or [])
     keywords_include = list(config.get("keywords_include") or [])

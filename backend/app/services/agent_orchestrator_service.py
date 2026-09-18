@@ -304,7 +304,7 @@ async def run_email_application(
         attachments.append((cl_pdf_bytes, cover_letter_attach_name))
 
     config = await config_service.get_config()
-    profile = await candidate_service.get_profile()
+    profile = (await candidate_service.get_profile()) or {}
     jd_analysis = job.get("jd_analysis", {})
 
     # Build personalized email

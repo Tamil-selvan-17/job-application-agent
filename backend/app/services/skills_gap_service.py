@@ -28,7 +28,7 @@ async def analyze_skills_gap(job_id: str, force: bool = False) -> dict:
         return d
 
     job = await job_service.get_job(job_id)
-    profile = await candidate_service.get_profile()
+    profile = (await candidate_service.get_profile()) or {}
 
     job_title = job.get("title", "Software Engineer")
     company = job.get("company", "Company")
