@@ -111,8 +111,8 @@ const $$ = (sel, ctx = document) => ctx.querySelector(sel);
 
 function setText(id, val)  { const el = $(id); if (el) el.textContent = val ?? '—'; }
 function setHtml(id, val)  { const el = $(id); if (el) el.innerHTML  = val ?? ''; }
-function show(id)          { const el = $(id); if (el) el.classList.remove('d-none'); }
-function hide(id)          { const el = $(id); if (el) el.classList.add('d-none'); }
+function show(id)          { const el = $(id); if (el) { el.classList.remove('d-none'); el.style.display = ''; } }
+function hide(id)          { const el = $(id); if (el) { el.classList.add('d-none'); el.style.display = 'none'; } }
 function toggle(id, cond)  { cond ? show(id) : hide(id); }
 
 function setMsg(id, msg, type = '') {
