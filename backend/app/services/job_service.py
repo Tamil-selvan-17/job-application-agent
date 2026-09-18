@@ -125,6 +125,8 @@ async def delete_job(job_id: str) -> None:
     result = await db.jobs.delete_one({"_id": ObjectId(job_id)})
     if result.deleted_count == 0:
         raise ValueError("Job not found")
+    await db.applications.delete_many({"job_id": job_id})
+    await db.generated_resumes.delete_many({"job_id": job_id})
 
 
 async def resolve_apply_url(job_id: str) -> str:
@@ -192,8 +194,17 @@ async def clear_jobs(status: str | None = "new") -> int:
     status=None to clear everything regardless of status.
     """
     db = get_db()
-    query = {"status": status} if status else {}
-    result = await db.jobs.delete_many(query)
+    if status:
+        matching_jobs = await db.jobs.find({"status": status}, {"_id": 1}).to_list(length=10000)
+        job_ids = [str(j["_id"]) for j in matching_jobs]
+        result = await db.jobs.delete_many({"status": status})
+        if job_ids:
+            await db.applications.delete_many({"job_id": {"$in": job_ids}})
+            await db.generated_resumes.delete_many({"job_id": {"$in": job_ids}})
+    else:
+        result = await db.jobs.delete_many({})
+        await db.applications.delete_many({})
+        await db.generated_resumes.delete_many({})
     return result.deleted_count
 
 

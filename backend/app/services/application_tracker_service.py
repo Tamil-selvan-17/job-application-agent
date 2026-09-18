@@ -191,6 +191,11 @@ async def get_application_for_job(job_id: str) -> dict | None:
 
 async def list_applications(status: str | None = None) -> list[dict]:
     db = get_db()
+    existing_job_ids = set([str(j["_id"]) for j in await db.jobs.find({}, {"_id": 1}).to_list(length=10000)])
+    if not existing_job_ids:
+        await db.applications.delete_many({})
+        return []
+    await db.applications.delete_many({"job_id": {"$nin": list(existing_job_ids)}})
     query = {"status": status} if status else {}
     apps = await db.applications.find(query).sort("created_at", -1).to_list(length=500)
     return [_app_to_dict(a) for a in apps]
@@ -208,6 +213,15 @@ async def check_duplicate_application(job_id: str) -> bool:
 async def get_dashboard_stats() -> dict:
     db = get_db()
     await cleanup_expired_resumes()
+
+    # Clean up orphaned applications/resumes whose job_id no longer exists in db.jobs
+    existing_job_ids = set([str(j["_id"]) for j in await db.jobs.find({}, {"_id": 1}).to_list(length=10000)])
+    if not existing_job_ids:
+        await db.applications.delete_many({})
+        await db.generated_resumes.delete_many({})
+    else:
+        await db.applications.delete_many({"job_id": {"$nin": list(existing_job_ids)}})
+        await db.generated_resumes.delete_many({"job_id": {"$nin": list(existing_job_ids)}})
 
     app_applied = await db.applications.count_documents({"status": "APPLIED"})
     app_email_sent = await db.applications.count_documents({"status": "EMAIL_SENT"})
