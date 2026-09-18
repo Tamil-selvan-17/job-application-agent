@@ -1870,7 +1870,12 @@ const App = {
   },
 
   async openInterviewPrepModal(jobId) {
-    State.currentJobId = jobId || State.currentJobId;
+    const targetId = (typeof jobId === 'string' && jobId.length > 0) ? jobId : State.currentJobId;
+    if (!targetId || typeof targetId !== 'string' || targetId.startsWith('[object')) {
+      Toast.error('Please select a valid job first.');
+      return;
+    }
+    State.currentJobId = targetId;
     openModal('interview-prep-modal');
     hide('ip-content');
     show('ip-loading');
@@ -1878,8 +1883,12 @@ const App = {
   },
 
   async generateInterviewPrep(force = false) {
+    if (typeof force !== 'boolean') force = false;
     const jobId = State.currentJobId;
-    if (!jobId) return;
+    if (!jobId || typeof jobId !== 'string' || jobId.startsWith('[object')) {
+      Toast.error('No valid job selected.');
+      return;
+    }
     hide('ip-content');
     show('ip-loading');
     try {
@@ -1923,12 +1932,17 @@ const App = {
   },
 
   async openSkillsGapModal(jobId) {
-    State.currentJobId = jobId || State.currentJobId;
+    const targetId = (typeof jobId === 'string' && jobId.length > 0) ? jobId : State.currentJobId;
+    if (!targetId || typeof targetId !== 'string' || targetId.startsWith('[object')) {
+      Toast.error('Please select a valid job first.');
+      return;
+    }
+    State.currentJobId = targetId;
     openModal('skills-gap-modal');
     hide('sg-content');
     show('sg-loading');
     try {
-      const sg = await API.post(`/api/jobs/${State.currentJobId}/skills-gap`, {});
+      const sg = await API.post(`/api/jobs/${targetId}/skills-gap`, {});
       setText('sg-match-badge', `${sg.match_percentage || 80}% Fit Match`);
       setText('sg-focus-area', sg.interview_focus_area || 'Core technical stack');
 
