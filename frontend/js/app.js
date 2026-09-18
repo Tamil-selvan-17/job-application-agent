@@ -327,6 +327,25 @@ function closePDFModal() {
 }
 
 /* ─────────────────────────────────────────────────────────
+   GENERIC MODAL HELPERS
+   ───────────────────────────────────────────────────────── */
+function openModal(id) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.remove('d-none');
+  el.style.display = 'flex';
+}
+
+function closeModal(id) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.add('d-none');
+  el.style.display = 'none';
+}
+window.openModal = openModal;
+window.closeModal = closeModal;
+
+/* ─────────────────────────────────────────────────────────
    JOB DETAIL PANEL
    ───────────────────────────────────────────────────────── */
 function openPanel() {
@@ -400,6 +419,8 @@ const App = {
     // PDF modal close
     $('pdf-modal-close').addEventListener('click', closePDFModal);
     $('pdf-modal').addEventListener('click', (e) => { if (e.target === $('pdf-modal')) closePDFModal(); });
+    $('interview-prep-modal')?.addEventListener('click', (e) => { if (e.target === $('interview-prep-modal')) closeModal('interview-prep-modal'); });
+    $('skills-gap-modal')?.addEventListener('click', (e) => { if (e.target === $('skills-gap-modal')) closeModal('skills-gap-modal'); });
 
     // Profile section tabs
     document.querySelectorAll('#profile-section-tabs .section-tab').forEach(tab => {
