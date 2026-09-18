@@ -186,10 +186,12 @@ function matchBadgeHTML(score) {
 
 function buildJobCard(job) {
   const status   = job.status || 'new';
-  const match    = job.match_score;
-  const hasEmail = job.hr_email;
-  const contacts = (job.contacts_count || 0);
-  const resumeReady = job.resume_generated;
+  const match    = job.match_score ?? job.match_percent;
+  const hrEmail  = job.hr_email || job.application_email_to;
+  const contactsList = job.contacts || [];
+  const contacts = job.contacts_count || (contactsList ? contactsList.length : 0);
+  const hasEmail = !!(hrEmail || contacts > 0);
+  const resumeReady = !!(job.generated_resume_id || job.resume_status === 'READY' || job.resume_status === 'GENERATED' || job.resume_status === 'RESUME_READY' || job.resume_generated);
   const atsScore = job.ats_score;
 
   return `
@@ -211,8 +213,8 @@ function buildJobCard(job) {
         <span>Resume: ${resumeReady ? `Ready${atsScore ? ` (ATS: ${Math.round(atsScore)}%)` : ''}` : 'Not generated'}</span>
       </div>
       <div class="job-card-info-row">
-        <span class="badge-dot ${hasEmail || contacts ? 'ready' : 'new'}" style="width:7px;height:7px;border-radius:50%;background:${hasEmail || contacts ? 'var(--green)' : 'var(--text-muted)'}"></span>
-        <span>HR Email: ${contacts ? `${contacts} contact${contacts > 1 ? 's' : ''} found` : (hasEmail ? 'On file' : 'Not found')}</span>
+        <span class="badge-dot ${hasEmail ? 'ready' : 'new'}" style="width:7px;height:7px;border-radius:50%;background:${hasEmail ? 'var(--green)' : 'var(--text-muted)'}"></span>
+        <span>HR Email: ${contacts ? `${contacts} contact${contacts > 1 ? 's' : ''} found` : (hrEmail ? esc(hrEmail) : 'Not found')}</span>
       </div>
     </div>
     <div class="job-card-actions" onclick="event.stopPropagation()">

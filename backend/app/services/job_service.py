@@ -542,6 +542,8 @@ async def analyze_unanalyzed_jobs(resume_id: str | None = None, limit: int = 15)
 
 def _to_summary(j: dict) -> dict:
     analysis = j.get("analysis") or {}
+    contacts = j.get("contacts") or []
+    hr_email = j.get("hr_email") or j.get("application_email_to") or (contacts[0].get("email") if contacts and isinstance(contacts[0], dict) else None)
     return {
         "id": str(j["_id"]),
         "title": j["title"],
@@ -552,6 +554,15 @@ def _to_summary(j: dict) -> dict:
         "created_at": j["created_at"],
         "updated_at": j["updated_at"],
         "match_percent": analysis.get("match_percent"),
+        "generated_resume_id": j.get("generated_resume_id"),
+        "resume_status": j.get("resume_status", "NOT_GENERATED"),
+        "resume_generated": bool(j.get("generated_resume_id") or j.get("resume_status") in ("READY", "GENERATED", "RESUME_READY")),
+        "hr_email": hr_email,
+        "application_email_to": j.get("application_email_to"),
+        "contacts": contacts,
+        "contacts_count": len(contacts),
+        "ats_score": j.get("ats_score", 0),
+        "workflow_state": j.get("workflow_state", "JOB_CREATED"),
     }
 
 
