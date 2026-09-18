@@ -1,40 +1,71 @@
-from fastapi import APIRouter
+import logging
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.ai_provider import get_ai_provider, get_effective_gemini_model
 from app.services import runtime_settings_service
 from app.config.env import env_settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-# Common current Gemini model names. Newer 3.x preview models may not be
-# available to every API key yet, so the 2.5 series is listed first as
-# the safest default set - all confirmed stable and generally available.
+# Comprehensive list of stable and preview free Gemini models
 GEMINI_MODEL_CHOICES = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
     "gemini-2.5-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-pro",
-    "gemini-flash-lite-latest",
+    "gemini-1.5-flash-8b",
+    "gemini-2.5-pro",
     "gemini-flash-latest",
+    "gemini-pro-latest",
+    "gemini-2.5-flash-preview-05-20",
+    "gemini-2.5-pro-preview-06-05",
 ]
 
 
+async def fetch_available_gemini_models() -> list[str]:
+    """Fetch live list of available generation models from Gemini API if API key is set."""
+    key = env_settings.gemini_api_key
+    if not key:
+        return GEMINI_MODEL_CHOICES
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                fetched = []
+                for m in data.get("models", []):
+                    name = m.get("name", "").replace("models/", "")
+                    methods = m.get("supportedGenerationMethods", [])
+                    if "generateContent" in methods and not any(x in name.lower() for x in ["embedding", "imagen", "aqa", "bison"]):
+                        fetched.append(name)
+                if fetched:
+                    # Combine fetched models with default choices without duplicates
+                    return list(dict.fromkeys(fetched + GEMINI_MODEL_CHOICES))
+    except Exception as e:
+        logger.warning("[SettingsRouter] Error fetching models from Gemini API: %s", e)
+
+    return GEMINI_MODEL_CHOICES
+
+
 class GeminiModelUpdate(BaseModel):
-    model: str
+    model: str | None = None
+    gemini_model: str | None = None
 
 
 @router.get("")
 async def get_settings():
     """
-    AI provider (Ollama vs Gemini) stays .env-only by design - no UI
-    toggle for that. The Gemini MODEL, however, is switchable live from
-    the UI (see PUT /gemini-model) since models intermittently return
-    503/429 and each has its own separate quota - being stuck on one
-    until a redeploy isn't useful.
+    Returns current AI settings, active model, and available Gemini models list.
     """
     effective_model = await get_effective_gemini_model()
+    choices = await fetch_available_gemini_models()
     return {
         "ai_provider": env_settings.ai_provider,
         "ollama_base_url": env_settings.ollama_base_url,
@@ -42,26 +73,38 @@ async def get_settings():
         "gemini_model": effective_model,
         "gemini_model_is_override": effective_model != env_settings.gemini_model,
         "gemini_model_env_default": env_settings.gemini_model,
-        "gemini_model_choices": GEMINI_MODEL_CHOICES,
+        "gemini_model_choices": choices,
         "gemini_api_key_set": bool(env_settings.gemini_api_key),
     }
 
 
+@router.put("")
 @router.put("/gemini-model")
 async def set_gemini_model(req: GeminiModelUpdate):
     """
-    Switches the Gemini model used for all AI calls immediately - no
-    redeploy needed. Persists in Mongo, so it survives restarts. Doesn't
-    validate the model name against Google's API here (that would cost
-    an extra call) - use Test Connection right after switching to confirm
-    it actually works.
+    Switches the Gemini model used for all AI calls immediately.
+    Accepts { gemini_model: "..." } or { model: "..." }.
     """
-    await runtime_settings_service.set_override("gemini_model", req.model)
+    chosen_model = req.gemini_model or req.model
+    if not chosen_model:
+        raise HTTPException(400, "Field 'gemini_model' or 'model' is required.")
+
+    await runtime_settings_service.set_override("gemini_model", chosen_model)
     return await get_settings()
 
 
+@router.get("/gemini-models")
+async def get_gemini_models():
+    """Returns the list of available Gemini models."""
+    choices = await fetch_available_gemini_models()
+    return {"models": choices}
+
+
 @router.get("/ai/health")
+@router.get("/health")
 async def ai_health():
     """Check whether the currently active AI provider+model is reachable."""
     provider = await get_ai_provider()
-    return await provider.health_check()
+    res = await provider.health_check()
+    res["status"] = "ok" if res.get("ok") else "error"
+    return res

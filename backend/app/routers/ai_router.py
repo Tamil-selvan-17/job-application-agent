@@ -24,3 +24,12 @@ async def generate(req: GenerateRequest):
     except Exception as e:
         raise HTTPException(502, f"AI provider ({provider.name}) error: {e}")
     return {"provider": provider.name, "response": result}
+
+
+@router.get("/health")
+async def ai_health():
+    """Check whether the currently active AI provider+model is reachable."""
+    provider = await get_ai_provider()
+    res = await provider.health_check()
+    res["status"] = "ok" if res.get("ok") else "error"
+    return res

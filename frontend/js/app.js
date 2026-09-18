@@ -1629,11 +1629,20 @@ const App = {
       setText('disp_ollama_model',   s.ollama_model     || '—');
       setText('disp_gemini_key',     s.gemini_api_key_set ? '●●●●●●●● (set)' : '(not set)');
       const sel = $('gemini-model-select');
-      if (sel && s.gemini_model) {
-        // Ensure option exists
-        let opt = sel.querySelector(`option[value="${s.gemini_model}"]`);
-        if (!opt) { opt = new Option(s.gemini_model, s.gemini_model); sel.appendChild(opt); }
-        sel.value = s.gemini_model;
+      if (sel) {
+        const choices = s.gemini_model_choices || [
+          "gemini-2.0-flash",
+          "gemini-1.5-flash",
+          "gemini-2.5-flash",
+          "gemini-2.0-flash-lite",
+          "gemini-1.5-pro",
+          "gemini-1.5-flash-8b",
+          "gemini-2.5-pro",
+          "gemini-flash-latest",
+          "gemini-pro-latest"
+        ];
+        sel.innerHTML = choices.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+        if (s.gemini_model) sel.value = s.gemini_model;
       }
     } catch(e) {
       Toast.error('Settings load failed: ' + e.message);
@@ -1660,12 +1669,22 @@ const App = {
     if (!model) return;
     setMsg('gemini-model-msg', 'Saving...', '');
     try {
-      await API.put('/api/settings', { gemini_model: model });
-      setMsg('gemini-model-msg', '✓ Saved', 'success');
+      await API.put('/api/settings/gemini-model', { model: model, gemini_model: model });
+      setMsg('gemini-model-msg', '✓ Saved (' + model + ')', 'success');
+      Toast.success('Gemini model updated to ' + model);
       setTimeout(() => setMsg('gemini-model-msg',''), 3000);
       App.checkAI();
     } catch(e) {
-      setMsg('gemini-model-msg', '✗ ' + e.message, 'error');
+      try {
+        await API.put('/api/settings', { gemini_model: model, model: model });
+        setMsg('gemini-model-msg', '✓ Saved (' + model + ')', 'success');
+        Toast.success('Gemini model updated to ' + model);
+        setTimeout(() => setMsg('gemini-model-msg',''), 3000);
+        App.checkAI();
+      } catch(e2) {
+        setMsg('gemini-model-msg', '✗ ' + e2.message, 'error');
+        Toast.error('Save failed: ' + e2.message);
+      }
     }
   },
 
@@ -1673,14 +1692,21 @@ const App = {
     setMsg('settings-msg', 'Testing...', '');
     $('test-ai-btn').disabled = true;
     try {
-      const d = await API.get('/api/ai/health');
-      const ok = d.status === 'ok' || d.healthy;
-      setMsg('settings-msg', ok ? '✓ Connection OK' : '✗ Connection failed', ok ? 'success' : 'error');
-      if (ok) Toast.success('AI connection OK!');
-      else    Toast.error('AI connection failed');
+      let d;
+      try {
+        d = await API.get('/api/ai/health');
+      } catch {
+        d = await API.get('/api/settings/ai/health');
+      }
+      const ok = d.ok || d.healthy || d.status === 'ok';
+      const detail = d.model ? ` (${d.provider} / ${d.model})` : d.error ? ` (${d.error})` : '';
+      setMsg('settings-msg', ok ? `✓ Connection OK${detail}` : `✗ Failed${detail}`, ok ? 'success' : 'error');
+      if (ok) Toast.success(`AI Connection OK!${detail}`);
+      else    Toast.error(`AI Connection failed${detail}`);
       App.checkAI();
     } catch(e) {
       setMsg('settings-msg', '✗ ' + e.message, 'error');
+      Toast.error('Test connection failed: ' + e.message);
     } finally {
       $('test-ai-btn').disabled = false;
     }
