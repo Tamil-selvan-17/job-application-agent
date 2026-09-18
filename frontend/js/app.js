@@ -487,7 +487,26 @@ const App = {
 
     try {
       const apps = await API.get('/api/applications');
-      const list = Array.isArray(apps) ? apps : (apps.applications || []);
+      let list = Array.isArray(apps) ? apps : (apps.applications || []);
+      
+      if (!list.length) {
+        try {
+          const jobsData = await API.get('/api/jobs');
+          const jobsList = Array.isArray(jobsData) ? jobsData : (jobsData.jobs || []);
+          if (jobsList.length) {
+            list = jobsList.map(j => ({
+              company: j.company || j.company_name || '—',
+              role: j.title || j.job_title || '—',
+              method: j.resume_status === 'READY' ? 'Resume Ready' : (j.status || 'job'),
+              status: j.status || 'NEW',
+              applied_at: j.created_at || j.updated_at
+            }));
+          }
+        } catch (je) {
+          console.warn('Fallback jobs fetch error:', je.message);
+        }
+      }
+
       const tbody = $('dashboard-apps-tbody');
       const table = $('dashboard-apps-table');
       const empty = $('dashboard-apps-empty');

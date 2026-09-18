@@ -59,7 +59,7 @@ async def store_generated_resume(
         "hooks_used": hooks_used,
         "created_at": now,
         "applied_at": None,
-        "scheduled_delete_at": None,
+        "scheduled_delete_at": now + timedelta(days=1),
     }
     result = await db.generated_resumes.insert_one(doc)
     return str(result.inserted_id)
@@ -107,12 +107,18 @@ async def mark_resume_applied(resume_id: str) -> None:
 
 
 async def cleanup_expired_resumes() -> int:
-    """Delete generated_resumes whose scheduled_delete_at is in the past.
-    Called daily by the scheduler. Returns the number of documents deleted."""
+    """Delete generated_resumes whose scheduled_delete_at is in the past or created >24h ago.
+    Called daily by the scheduler or on dashboard load. Returns the number of documents deleted."""
     db = get_db()
     now = datetime.now(timezone.utc)
+    one_day_ago = now - timedelta(days=1)
     result = await db.generated_resumes.delete_many(
-        {"scheduled_delete_at": {"$lte": now, "$ne": None}}
+        {
+            "$or": [
+                {"scheduled_delete_at": {"$lte": now, "$ne": None}},
+                {"created_at": {"$lte": one_day_ago}}
+            ]
+        }
     )
     return result.deleted_count
 
@@ -201,19 +207,43 @@ async def check_duplicate_application(job_id: str) -> bool:
 
 async def get_dashboard_stats() -> dict:
     db = get_db()
-    total = await db.applications.count_documents({})
-    applied = await db.applications.count_documents({"status": "APPLIED"})
-    email_sent = await db.applications.count_documents({"status": "EMAIL_SENT"})
-    pending = await db.applications.count_documents({"status": "PENDING"})
-    failed = await db.applications.count_documents({"status": "FAILED"})
-    resume_ready = await db.generated_resumes.count_documents({})
+    await cleanup_expired_resumes()
+
+    app_applied = await db.applications.count_documents({"status": "APPLIED"})
+    app_email_sent = await db.applications.count_documents({"status": "EMAIL_SENT"})
+    app_pending = await db.applications.count_documents({"status": "PENDING"})
+    app_failed = await db.applications.count_documents({"status": "FAILED"})
+
+    job_applied = await db.jobs.count_documents({"status": {"$in": ["applied", "APPLIED"]}})
+    job_email_sent = await db.jobs.count_documents({"status": {"$in": ["email_sent", "EMAIL_SENT"]}})
+    job_pending = await db.jobs.count_documents({"status": {"$in": ["pending", "PENDING", "new", "NEW"]}})
+    job_failed = await db.jobs.count_documents({"status": {"$in": ["failed", "FAILED", "rejected", "REJECTED"]}})
+    job_resume_ready = await db.jobs.count_documents({"$or": [{"status": "resume_ready"}, {"resume_status": "READY"}]})
+
+    resumes_count = await db.generated_resumes.count_documents({})
+
+    applied = max(app_applied, job_applied)
+    email_sent = max(app_email_sent, job_email_sent)
+    pending = max(app_pending, job_pending)
+    failed = max(app_failed, job_failed)
+    resume_ready = max(resumes_count, job_resume_ready)
+
+    total_apps = await db.applications.count_documents({})
+    total_jobs = await db.jobs.count_documents({})
+    total = max(total_apps, total_jobs, applied + email_sent + pending + failed + resume_ready)
+
     return {
         "total": total,
+        "total_applied": applied,
         "applied": applied,
         "email_sent": email_sent,
+        "emails_sent": email_sent,
         "pending": pending,
+        "pending_applications": pending,
         "failed": failed,
+        "rejected": failed,
         "resume_ready": resume_ready,
+        "resumes_generated": resume_ready,
     }
 
 
