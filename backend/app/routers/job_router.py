@@ -96,7 +96,7 @@ async def generate_interview_prep(job_id: str, force: bool = Query(False)):
     from app.services import interview_prep_service
     try:
         return await interview_prep_service.generate_interview_prep(job_id, force=force)
-    except ValueError as e:
+    except Exception as e:
         raise HTTPException(400, str(e))
 
 
@@ -114,7 +114,7 @@ async def analyze_skills_gap(job_id: str, force: bool = Query(False)):
     from app.services import skills_gap_service
     try:
         return await skills_gap_service.analyze_skills_gap(job_id, force=force)
-    except ValueError as e:
+    except Exception as e:
         raise HTTPException(400, str(e))
 
 
