@@ -217,7 +217,8 @@ function buildJobCard(job) {
     </div>
     <div class="job-card-actions" onclick="event.stopPropagation()">
       <button class="btn btn-secondary btn-xs" onclick="App.triggerAnalyzeJD('${job.id}')">Analyze JD</button>
-      <button class="btn btn-secondary btn-xs" onclick="App.triggerFindContacts('${job.id}')">Find HR</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openSkillsGapModal('${job.id}')">📊 Skills Gap</button>
+      <button class="btn btn-secondary btn-xs" onclick="App.openInterviewPrepModal('${job.id}')">🎯 STAR Prep</button>
       <button class="btn btn-primary btn-xs" onclick="App.triggerGenerateResume('${job.id}')">Gen Resume</button>
       ${resumeReady ? `<button class="btn btn-secondary btn-xs" onclick="App.triggerPreviewPDF('${job.id}')">Preview PDF</button>` : ''}
       <button class="btn btn-secondary btn-xs" onclick="App.triggerEmailHR('${job.id}')">Email HR</button>
@@ -1826,6 +1827,104 @@ const App = {
       }
     };
     reader.readAsText(file);
+  },
+
+  async batchGenerateResumes() {
+    setMsg('analyze-unanalyzed-msg', 'Batch generating customized resumes...', '');
+    const btn = $('batch-generate-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const d = await API.post('/api/jobs/batch-generate-resumes?min_match=70&limit=5', {});
+      const msg = `Batch generated resumes for ${d.successful || 0} jobs out of ${d.processed || 0}.`;
+      setMsg('analyze-unanalyzed-msg', msg, 'success');
+      Toast.success(msg);
+      App.loadJobs();
+      App.loadDashboard();
+    } catch(e) {
+      setMsg('analyze-unanalyzed-msg', e.message, 'error');
+      Toast.error('Batch resume generation failed: ' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  async openInterviewPrepModal(jobId) {
+    State.currentJobId = jobId || State.currentJobId;
+    openModal('interview-prep-modal');
+    hide('ip-content');
+    show('ip-loading');
+    await App.generateInterviewPrep(false);
+  },
+
+  async generateInterviewPrep(force = false) {
+    const jobId = State.currentJobId;
+    if (!jobId) return;
+    hide('ip-content');
+    show('ip-loading');
+    try {
+      const prep = await API.post(`/api/jobs/${jobId}/interview-prep?force=${force}`, {});
+      setText('ip-modal-title', `🎯 AI STAR Interview Prep — ${prep.company || 'Job'}`);
+      setText('ip-summary-text', prep.summary || 'Custom interview questions tailored to candidate background and role requirements.');
+      
+      const qList = $('ip-questions-list');
+      const questions = prep.questions || [];
+      if (!questions.length) {
+        qList.innerHTML = '<p class="text-muted font-sm">No questions generated yet.</p>';
+      } else {
+        qList.innerHTML = questions.map((q, idx) => `
+          <div class="glass-card mb-3 p-3" style="border-left:3px solid var(--indigo);background:rgba(255,255,255,0.03);padding:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span class="badge badge-purple" style="font-size:10px">${esc(q.category || 'General')}</span>
+              <span class="font-sm text-muted">Q${idx + 1}</span>
+            </div>
+            <div class="fw-600 font-sm mb-2" style="font-size:14px;color:var(--text-bright)">${esc(q.question)}</div>
+            <div class="font-sm text-muted mb-2" style="font-style:italic">Why asked: ${esc(q.why_asked || '')}</div>
+            
+            ${q.star_answer ? `
+            <div class="glass-card mb-2 font-sm" style="background:rgba(255,255,255,0.02);padding:10px 14px">
+              <div style="margin-bottom:4px"><strong style="color:var(--indigo)">S (Situation):</strong> ${esc(q.star_answer.situation || '')}</div>
+              <div style="margin-bottom:4px"><strong style="color:var(--cyan)">T (Task):</strong> ${esc(q.star_answer.task || '')}</div>
+              <div style="margin-bottom:4px"><strong style="color:var(--purple)">A (Action):</strong> ${esc(q.star_answer.action || '')}</div>
+              <div><strong style="color:var(--emerald)">R (Result):</strong> ${esc(q.star_answer.result || '')}</div>
+            </div>` : ''}
+
+            ${q.pro_tip ? `<div class="font-sm text-yellow">💡 <strong>Pro Tip:</strong> ${esc(q.pro_tip)}</div>` : ''}
+          </div>
+        `).join('');
+      }
+
+      show('ip-content');
+      hide('ip-loading');
+    } catch(e) {
+      hide('ip-loading');
+      Toast.error('Interview prep error: ' + e.message);
+    }
+  },
+
+  async openSkillsGapModal(jobId) {
+    State.currentJobId = jobId || State.currentJobId;
+    openModal('skills-gap-modal');
+    hide('sg-content');
+    show('sg-loading');
+    try {
+      const sg = await API.post(`/api/jobs/${State.currentJobId}/skills-gap`, {});
+      setText('sg-match-badge', `${sg.match_percentage || 80}% Fit Match`);
+      setText('sg-focus-area', sg.interview_focus_area || 'Core technical stack');
+
+      const matched = sg.matching_skills || [];
+      const missing = sg.missing_skills || [];
+      const bullets = sg.resume_bullet_suggestions || [];
+
+      $('sg-matched-tags').innerHTML = matched.length ? matched.map(s => `<span class="badge badge-emerald">${esc(s)}</span>`).join('') : '<span class="text-muted font-sm">None explicitly matching</span>';
+      $('sg-missing-tags').innerHTML = missing.length ? missing.map(s => `<span class="badge badge-yellow">${esc(s)}</span>`).join('') : '<span class="text-muted font-sm">No critical missing skills</span>';
+      $('sg-bullets-list').innerHTML = bullets.length ? `<ul style="padding-left:18px;margin:0">${bullets.map(b => `<li class="mb-1">${esc(b)}</li>`).join('')}</ul>` : '<p class="text-muted font-sm">No bullet suggestions</p>';
+
+      show('sg-content');
+      hide('sg-loading');
+    } catch(e) {
+      hide('sg-loading');
+      Toast.error('Skills gap analysis failed: ' + e.message);
+    }
   },
 };
 

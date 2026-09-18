@@ -85,6 +85,39 @@ async def analyze_unanalyzed(resume_id: str | None = Query(None), limit: int = Q
     return await job_service.analyze_unanalyzed_jobs(resume_id=resume_id, limit=limit)
 
 
+@router.post("/batch-generate-resumes")
+async def batch_generate_resumes(min_match: int = Query(70), limit: int = Query(5, ge=1, le=20)):
+    from app.services import agent_orchestrator_service
+    return await agent_orchestrator_service.run_batch_resume_generation(min_match=min_match, limit=limit)
+
+
+@router.post("/{job_id}/interview-prep")
+async def generate_interview_prep(job_id: str, force: bool = Query(False)):
+    from app.services import interview_prep_service
+    try:
+        return await interview_prep_service.generate_interview_prep(job_id, force=force)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/{job_id}/interview-prep")
+async def get_interview_prep(job_id: str):
+    from app.services import interview_prep_service
+    data = await interview_prep_service.get_interview_prep(job_id)
+    if not data:
+        raise HTTPException(404, "Interview prep not generated yet")
+    return data
+
+
+@router.post("/{job_id}/skills-gap")
+async def analyze_skills_gap(job_id: str, force: bool = Query(False)):
+    from app.services import skills_gap_service
+    try:
+        return await skills_gap_service.analyze_skills_gap(job_id, force=force)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/{job_id}", response_model=JobDetail)
 async def get_job(job_id: str):
     try:

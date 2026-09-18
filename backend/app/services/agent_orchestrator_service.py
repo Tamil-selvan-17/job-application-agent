@@ -522,3 +522,39 @@ async def cancel_website_application(job_id: str) -> dict:
     browser_agent_service.close_session(job_id)
     await _update_job(job_id, {"application_status": "NOT_APPLIED"})
     return {"status": "cancelled"}
+
+
+async def run_batch_resume_generation(min_match: int = 70, limit: int = 5) -> dict:
+    """
+    Finds up to `limit` jobs that don't have a generated resume yet
+    and runs the full resume pipeline on them.
+    """
+    db = get_db()
+    cursor = db.jobs.find({
+        "resume_status": {"$ne": "READY"},
+        "$or": [
+            {"match_percent": {"$gte": min_match}},
+            {"ats_score": {"$gte": min_match}}
+        ]
+    }).limit(limit)
+
+    candidate_jobs = await cursor.to_list(length=limit)
+    if not candidate_jobs:
+        cursor = db.jobs.find({"resume_status": {"$ne": "READY"}}).limit(limit)
+        candidate_jobs = await cursor.to_list(length=limit)
+
+    results = []
+    for j in candidate_jobs:
+        jid = str(j["_id"])
+        try:
+            res = await run_resume_pipeline(jid)
+            results.append({"job_id": jid, "status": "success", "ats_score": res.get("ats_score", 0)})
+        except Exception as e:
+            logger.error("[BatchResume] Failed job %s: %s", jid, e)
+            results.append({"job_id": jid, "status": "failed", "error": str(e)})
+
+    return {
+        "processed": len(results),
+        "successful": len([r for r in results if r["status"] == "success"]),
+        "details": results
+    }
